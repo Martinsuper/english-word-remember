@@ -1,0 +1,50 @@
+{
+  "name": "kaoyan-flashcards",
+  "version": "0.1.0",
+  "private": true,
+  "expo": {
+    "doctor": {
+      "appConfigFieldsNotSyncedCheck": {
+        "enabled": false
+      }
+    }
+  },
+  "main": "expo/AppEntry",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "install:android": "bash scripts/install-mobile.sh android",
+    "install:ios": "bash scripts/install-mobile.sh ios",
+    "install:mobile": "bash scripts/install-mobile.sh all",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/**/*.test.ts",
+    "doctor": "npx expo-doctor",
+    "check": "npm run typecheck && npm run test && npm run doctor"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "^2.2.0",
+    "expo": "~54.0.0",
+    "expo-notifications": "~0.32.17",
+    "expo-speech": "~14.0.8",
+    "expo-status-bar": "~3.0.7",
+    "expo-system-ui": "~6.0.9",
+    "jszip": "^3.10.1",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-safe-area-context": "~5.6.0",
+    "react-native-web": "^0.21.0"
+  },
+  "overrides": {
+    "postcss": "^8.5.10",
+    "uuid": "^11.1.1"
+  },
+  "devDependencies": {
+    "@types/react": "~19.1.10",
+    "babel-preset-expo": "~54.0.10",
+    "tsx": "^4.23.0",
+    "typescript": "^5.9.2"
+  }
+}
