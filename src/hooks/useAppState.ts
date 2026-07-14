@@ -69,6 +69,17 @@ function makeImportedPackId(title: string) {
   return `custom-${slug || 'words'}-${Date.now().toString(36)}`;
 }
 
+export const READING_PACK_ID = 'reading-vocabulary';
+
+export type ReadingWordInput = {
+  term: string;
+  phonetic?: string;
+  meaning?: string;
+  tags?: string[];
+  sentence: string;
+  sourceBook: string;
+};
+
 export function useAppState() {
   const [state, setState] = useState<AppState>(() => createDefaultAppState());
   const [hydrated, setHydrated] = useState(false);
@@ -373,12 +384,16 @@ export function useAppState() {
     }));
   };
 
-  const speakWord = (wordText: string) => {
-    Speech.stop();
+  const speakWord = async (wordText: string) => {
+    const text = wordText.trim();
+    if (!text) return;
+    await Speech.stop();
     Speech.speak(wordText, {
       language: 'en-US',
-      rate: 0.92,
+      rate: 0.86,
       pitch: 1,
+      useApplicationAudioSession: false,
+      onError: (error) => console.warn('Speech playback failed:', error),
     });
   };
 
@@ -477,6 +492,69 @@ export function useAppState() {
     return cleanWords.length;
   };
 
+  const upsertReadingWord = (input: ReadingWordInput) => {
+    const normalized = input.term.trim().toLowerCase();
+    const wordId = `reading-${normalized.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`;
+    setState((current) => {
+      const existingPack = current.customPacks.find((pack) => pack.id === READING_PACK_ID);
+      const existingWord = existingPack?.words.find(
+        (word) => word.term.trim().toLowerCase() === normalized,
+      );
+      const nextWord: Word = existingWord
+        ? {
+            ...existingWord,
+            phonetic: existingWord.phonetic || input.phonetic || '',
+            meaning: existingWord.meaning || input.meaning || '',
+            tags: [...new Set([...(existingWord.tags ?? []), ...(input.tags ?? [])])],
+            example: existingWord.example || input.sentence,
+            sourceBook: existingWord.sourceBook || input.sourceBook,
+            rawText: input.sentence,
+          }
+        : {
+            id: wordId,
+            term: input.term,
+            phonetic: input.phonetic || '',
+            meaning: input.meaning || '',
+            tags: input.tags,
+            example: input.sentence,
+            exampleMeaning: '',
+            sourceBook: input.sourceBook,
+            rawText: input.sentence,
+          };
+      const words = existingPack
+        ? existingPack.words.some((word) => word.id === nextWord.id)
+          ? existingPack.words.map((word) => (word.id === nextWord.id ? nextWord : word))
+          : [...existingPack.words, nextWord]
+        : [nextWord];
+      const customPacks = existingPack
+        ? current.customPacks.map((pack) =>
+            pack.id === READING_PACK_ID
+              ? { ...pack, words, description: `阅读中积累的生词，${words.length} 词` }
+              : pack,
+          )
+        : [
+            ...current.customPacks,
+            {
+              id: READING_PACK_ID,
+              title: '阅读生词',
+              description: `阅读中积累的生词，${words.length} 词`,
+              words,
+            },
+          ];
+      const plan = current.studyPlans[READING_PACK_ID] ?? createDefaultStudyPlan(READING_PACK_ID);
+      const nextState = {
+        ...current,
+        customPacks,
+        studyPlans: { ...current.studyPlans, [READING_PACK_ID]: plan },
+        packProgress: { ...current.packProgress, [READING_PACK_ID]: current.packProgress[READING_PACK_ID] ?? [] },
+      };
+      if (current.activePackId !== READING_PACK_ID) return nextState;
+      const progress = deckProgressFromDeck(current.deck);
+      return { ...nextState, deck: buildDeckFromWords(words, progress) };
+    });
+    return wordId;
+  };
+
   return {
     hydrated,
     state,
@@ -512,6 +590,7 @@ export function useAppState() {
     setSearchQuery,
     speakWord,
     importWordPack,
+    upsertReadingWord,
     switchPack,
     resetAll,
     isFavorite: (wordId: string) => favoriteIdSet.has(wordId),

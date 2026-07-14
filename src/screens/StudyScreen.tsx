@@ -5,6 +5,7 @@ import { RatingButton } from '../components/RatingButton';
 import { AutoScalingText } from '../components/AutoScalingText';
 import { AppStateApi } from '../hooks/useAppState';
 import { ReviewRating } from '../types';
+import { getWordExamples } from '../domain/wordExamples';
 
 type Result = { wordId: string; rating: ReviewRating };
 
@@ -14,6 +15,7 @@ export function StudyScreen({ app, onExit }: { app: AppStateApi; onExit: () => v
   const [flipped, setFlipped] = useState(false);
   const [results, setResults] = useState<Result[]>([]);
   const [showBatchSummary, setShowBatchSummary] = useState(false);
+  const [exampleIndex, setExampleIndex] = useState(0);
   const wordId = batchIds[currentIndex];
   const word = wordId ? app.getWordById(wordId) : undefined;
   const taskType = wordId ? app.getTaskWordType(wordId) : undefined;
@@ -23,11 +25,14 @@ export function StudyScreen({ app, onExit }: { app: AppStateApi; onExit: () => v
   const dailyPosition = Math.min(app.taskSummary.total, app.taskSummary.completed + 1);
   const isRated = results.some((result) => result.wordId === wordId);
   const chineseFront = app.state.settings.cardFrontLanguage === 'chinese';
+  const examples = word ? getWordExamples(word) : [];
+  const currentExample = examples[Math.min(exampleIndex, Math.max(0, examples.length - 1))];
 
   const showWordAt = (index: number) => {
     if (index < 0 || index >= batchIds.length || index === currentIndex) return;
     setCurrentIndex(index);
     setFlipped(false);
+    setExampleIndex(0);
   };
 
   const panResponder = useMemo(
@@ -53,6 +58,10 @@ export function StudyScreen({ app, onExit }: { app: AppStateApi; onExit: () => v
       setCurrentIndex(0);
     }
   }, [app.currentPlan.batchSize, app.taskQueue, batchIds.length, showBatchSummary]);
+
+  useEffect(() => {
+    setExampleIndex(0);
+  }, [wordId]);
 
   const batchStats = useMemo(() => {
     const known = results.filter((result) => result.rating === 'good').length;
@@ -183,10 +192,11 @@ export function StudyScreen({ app, onExit }: { app: AppStateApi; onExit: () => v
               <View style={styles.meaningBlock}>
                 <AutoScalingText adjustsFontSizeToFit minimumFontScale={0.4} numberOfLines={1} style={styles.word}>{word.term}</AutoScalingText>
                 {app.state.settings.showPhonetic && word.phonetic ? <Text style={styles.phonetic}>{word.phonetic}</Text> : null}
-                {app.state.settings.showExample && word.example ? (
+                {app.state.settings.showExample && currentExample ? (
                   <View style={styles.exampleBlock}>
-                    <Text style={styles.example}>{word.example}</Text>
-                    {app.state.settings.showExampleMeaning && word.exampleMeaning ? <Text style={styles.exampleMeaning}>{word.exampleMeaning}</Text> : null}
+                    {currentExample.sense ? <Text style={styles.exampleSense}>{currentExample.sense}</Text> : null}
+                    <Text style={styles.example}>{currentExample.sentence}</Text>
+                    {app.state.settings.showExampleMeaning && currentExample.translation ? <Text style={styles.exampleMeaning}>{currentExample.translation}</Text> : null}
                   </View>
                 ) : null}
               </View>
@@ -194,10 +204,11 @@ export function StudyScreen({ app, onExit }: { app: AppStateApi; onExit: () => v
               <View style={styles.meaningBlock}>
                 <AutoScalingText adjustsFontSizeToFit minimumFontScale={0.5} numberOfLines={1} style={styles.backWord}>{word.term}</AutoScalingText>
                 <Text style={styles.meaning}>{word.meaning}</Text>
-                {app.state.settings.showExample && word.example ? (
+                {app.state.settings.showExample && currentExample ? (
                   <View style={styles.exampleBlock}>
-                    <Text style={styles.example}>{word.example}</Text>
-                    {app.state.settings.showExampleMeaning && word.exampleMeaning ? <Text style={styles.exampleMeaning}>{word.exampleMeaning}</Text> : null}
+                    {currentExample.sense ? <Text style={styles.exampleSense}>{currentExample.sense}</Text> : null}
+                    <Text style={styles.example}>{currentExample.sentence}</Text>
+                    {app.state.settings.showExampleMeaning && currentExample.translation ? <Text style={styles.exampleMeaning}>{currentExample.translation}</Text> : null}
                   </View>
                 ) : null}
               </View>
@@ -230,6 +241,17 @@ export function StudyScreen({ app, onExit }: { app: AppStateApi; onExit: () => v
           </Pressable>
         </View>
 
+        {flipped && app.state.settings.showExample && examples.length > 1 ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`切换例句，当前第 ${exampleIndex + 1} 条，共 ${examples.length} 条`}
+            onPress={() => setExampleIndex((value) => (value + 1) % examples.length)}
+            style={styles.exampleSwitcher}
+          >
+            <Text style={styles.exampleSwitcherText}>换条例句 · {exampleIndex + 1} / {examples.length}</Text>
+          </Pressable>
+        ) : null}
+
         <View style={styles.ratingArea}>
           <Text style={styles.ratingHint}>{isRated ? '这个词已完成评价，可左右滑动查看其他词' : flipped ? '这次记得怎么样？' : '先回忆，再点击卡片查看背面'}</Text>
           <View style={[styles.ratingRow, (!flipped || isRated) && styles.ratingDisabled]} pointerEvents={flipped && !isRated ? 'auto' : 'none'}>
@@ -251,7 +273,7 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#0b100e' }, container: { flex: 1, padding: 18, gap: 12 },
   topBar: { minHeight: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, exitButton: { width: 58, paddingVertical: 10, borderRadius: 15, backgroundColor: '#151c18', borderWidth: 1, borderColor: '#263129', alignItems: 'center' }, exitText: { color: '#c7d0c9', fontSize: 12, fontWeight: '800' }, counters: { alignItems: 'center', gap: 2 }, dailyCounter: { color: '#d8dfd9', fontSize: 13, fontWeight: '900' }, batchCounter: { color: '#758279', fontSize: 10, fontWeight: '700' }, typePill: { width: 58, borderRadius: 15, paddingVertical: 9, backgroundColor: '#263129', alignItems: 'center' }, typeText: { color: '#a3e635', fontSize: 11, fontWeight: '900' },
   progressTrack: { height: 4, backgroundColor: '#263129', borderRadius: 99, overflow: 'hidden' }, progressFill: { height: '100%', backgroundColor: '#a3e635' }, studyOptions: { minHeight: 30, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, gestureHint: { color: '#657169', fontSize: 10, fontWeight: '700' }, frontLanguageButton: { borderRadius: 12, backgroundColor: '#1d2720', paddingHorizontal: 10, paddingVertical: 7 }, frontLanguageText: { color: '#a3e635', fontSize: 10, fontWeight: '900' },
-  cardGestureLayer: { flex: 1, minHeight: 350, maxHeight: 560, marginTop: 6 }, card: { flex: 1, backgroundColor: '#f5f7ee', borderRadius: 30, padding: 24, justifyContent: 'space-between' }, cardBack: { backgroundColor: '#eef7d5' }, sideLabel: { color: '#788077', fontSize: 10, letterSpacing: 2, fontWeight: '900' }, wordBlock: { alignItems: 'center', gap: 12 }, word: { color: '#10160f', fontSize: 46, lineHeight: 56, fontWeight: '900', textAlign: 'center' }, frontMeaning: { color: '#10160f', fontSize: 30, lineHeight: 43, fontWeight: '900', textAlign: 'center' }, phonetic: { color: '#697268', fontSize: 17, textAlign: 'center' }, meaningBlock: { gap: 15 }, backWord: { color: '#596b20', fontSize: 15, fontWeight: '900' }, meaning: { color: '#15200f', fontSize: 24, lineHeight: 34, fontWeight: '900' }, exampleBlock: { borderTopWidth: 1, borderTopColor: '#ced8ad', paddingTop: 14, gap: 7 }, example: { color: '#425039', fontSize: 14, lineHeight: 21 }, exampleMeaning: { color: '#6b7863', fontSize: 12, lineHeight: 19 }, cardFooter: { gap: 8 }, tapHint: { color: '#7a8378', fontSize: 12, fontWeight: '700', textAlign: 'center' }, wordNavigation: { minHeight: 38, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, wordNavigationButton: { minWidth: 86, minHeight: 36, borderRadius: 12, backgroundColor: '#1d2720', alignItems: 'center', justifyContent: 'center' }, wordNavigationButtonDisabled: { opacity: 0.3 }, wordNavigationText: { color: '#d7dfd8', fontSize: 11, fontWeight: '900' }, wordNavigationPosition: { color: '#748078', fontSize: 10, fontWeight: '800' },
+  cardGestureLayer: { flex: 1, minHeight: 350, maxHeight: 560, marginTop: 6 }, card: { flex: 1, backgroundColor: '#f5f7ee', borderRadius: 30, padding: 24, justifyContent: 'space-between' }, cardBack: { backgroundColor: '#eef7d5' }, sideLabel: { color: '#788077', fontSize: 10, letterSpacing: 2, fontWeight: '900' }, wordBlock: { alignItems: 'center', gap: 12 }, word: { color: '#10160f', fontSize: 46, lineHeight: 56, fontWeight: '900', textAlign: 'center' }, frontMeaning: { color: '#10160f', fontSize: 30, lineHeight: 43, fontWeight: '900', textAlign: 'center' }, phonetic: { color: '#697268', fontSize: 17, textAlign: 'center' }, meaningBlock: { gap: 15 }, backWord: { color: '#596b20', fontSize: 15, fontWeight: '900' }, meaning: { color: '#15200f', fontSize: 24, lineHeight: 34, fontWeight: '900' }, exampleBlock: { borderTopWidth: 1, borderTopColor: '#ced8ad', paddingTop: 14, gap: 7 }, exampleSense: { alignSelf: 'flex-start', color: '#52631f', backgroundColor: '#dceba9', borderRadius: 9, paddingHorizontal: 8, paddingVertical: 3, fontSize: 10, fontWeight: '900' }, example: { color: '#425039', fontSize: 14, lineHeight: 21 }, exampleMeaning: { color: '#6b7863', fontSize: 12, lineHeight: 19 }, cardFooter: { gap: 8 }, tapHint: { color: '#7a8378', fontSize: 12, fontWeight: '700', textAlign: 'center' }, wordNavigation: { minHeight: 38, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, wordNavigationButton: { minWidth: 86, minHeight: 36, borderRadius: 12, backgroundColor: '#1d2720', alignItems: 'center', justifyContent: 'center' }, wordNavigationButtonDisabled: { opacity: 0.3 }, wordNavigationText: { color: '#d7dfd8', fontSize: 11, fontWeight: '900' }, wordNavigationPosition: { color: '#748078', fontSize: 10, fontWeight: '800' }, exampleSwitcher: { alignSelf: 'center', borderRadius: 12, backgroundColor: '#263129', paddingHorizontal: 14, paddingVertical: 8 }, exampleSwitcherText: { color: '#a3e635', fontSize: 10, fontWeight: '900' },
   ratingArea: { gap: 8 }, ratingHint: { color: '#87938a', fontSize: 11, textAlign: 'center' }, ratingRow: { flexDirection: 'row', gap: 8 }, ratingDisabled: { opacity: 0.34 },
   summaryWrap: { flexGrow: 1, justifyContent: 'center', padding: 24, gap: 14 }, emptyWrap: { flex: 1, justifyContent: 'center', padding: 28, gap: 14 }, kicker: { color: '#a3e635', fontSize: 10, letterSpacing: 2, fontWeight: '900' }, summaryTitle: { color: '#f4f7f2', fontSize: 30, lineHeight: 38, fontWeight: '900' }, summarySubtitle: { color: '#8c998f', fontSize: 14, lineHeight: 21 }, summaryCard: { flexDirection: 'row', backgroundColor: '#151c18', borderRadius: 22, borderWidth: 1, borderColor: '#263129', paddingVertical: 18 }, summaryStat: { flex: 1, alignItems: 'center' }, summaryValue: { color: '#f4f7f2', fontSize: 22, fontWeight: '900' }, summaryLabel: { color: '#748078', fontSize: 10, marginTop: 4 }, detailCard: { backgroundColor: '#151c18', borderRadius: 20, padding: 16, gap: 7 }, detailTitle: { color: '#eef2ee', fontSize: 15, fontWeight: '900' }, detailLine: { color: '#849087', fontSize: 12, lineHeight: 18 }, primaryButton: { backgroundColor: '#eef7d5', borderRadius: 18, paddingVertical: 15, alignItems: 'center', marginTop: 5 }, primaryButtonText: { color: '#172009', fontSize: 14, fontWeight: '900' }, secondaryButton: { borderRadius: 18, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: '#2a352d' }, secondaryButtonText: { color: '#aeb8b0', fontSize: 13, fontWeight: '800' },
 });

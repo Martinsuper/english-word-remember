@@ -4,6 +4,7 @@ import { RatingButton } from '../components/RatingButton';
 import { AppStateApi } from '../hooks/useAppState';
 import { getWordProgressLabel, localDateKey } from '../domain/review';
 import { ReviewRating } from '../types';
+import { getWordExamples } from '../domain/wordExamples';
 
 export function WordDetailScreen({
   app,
@@ -11,12 +12,14 @@ export function WordDetailScreen({
   onBack,
   onSpeakWord,
   onReviewWord,
+  onOpenSource,
 }: {
   app: AppStateApi;
   wordId: string;
   onBack: () => void;
   onSpeakWord: (wordText: string) => void;
   onReviewWord?: (wordId: string, rating: ReviewRating) => void;
+  onOpenSource?: () => void | Promise<void>;
 }) {
   const word = app.getWordById(wordId);
 
@@ -34,6 +37,7 @@ export function WordDetailScreen({
   }
 
   const favorite = app.isFavorite(wordId);
+  const examples = getWordExamples(word);
   const sourceIndexLabel = '词表序号';
   const reviewWord = (rating: ReviewRating) => {
     if (onReviewWord) {
@@ -63,6 +67,11 @@ export function WordDetailScreen({
         <View style={styles.card}>
           <Text style={styles.word}>{word.term}</Text>
           <Text style={styles.phonetic}>{word.phonetic}</Text>
+          {word.tags && word.tags.length > 0 ? (
+            <View style={styles.tagRow}>
+              {word.tags.map((tag) => <Text key={tag} style={styles.tag}>{tag}</Text>)}
+            </View>
+          ) : null}
           <Text style={styles.meta}>{getWordProgressLabel(word)}</Text>
 
           <View style={styles.sectionBox}>
@@ -71,9 +80,14 @@ export function WordDetailScreen({
           </View>
 
           <View style={styles.sectionBox}>
-            <Text style={styles.sectionTitle}>例句</Text>
-            <Text style={styles.example}>{word.example}</Text>
-            <Text style={styles.exampleMeaning}>{word.exampleMeaning}</Text>
+            <Text style={styles.sectionTitle}>例句{examples.length > 1 ? ` · ${examples.length} 条` : ''}</Text>
+            {examples.length > 0 ? examples.map((example, index) => (
+              <View key={`${example.sentence}-${index}`} style={styles.exampleItem}>
+                {example.sense ? <Text style={styles.exampleSense}>{example.sense}</Text> : null}
+                <Text style={styles.example}>{example.sentence}</Text>
+                {example.translation ? <Text style={styles.exampleMeaning}>{example.translation}</Text> : null}
+              </View>
+            )) : <Text style={styles.exampleMeaning}>暂无例句</Text>}
           </View>
 
           {word.sourceBook ? (
@@ -84,6 +98,11 @@ export function WordDetailScreen({
                 {word.sourcePage ? ` · ${sourceIndexLabel} ${word.sourcePage}` : ''}
               </Text>
               {word.rawText ? <Text style={styles.exampleMeaning}>{word.rawText}</Text> : null}
+              {word.id.startsWith('reading-') && onOpenSource ? (
+                <Pressable onPress={onOpenSource} style={styles.sourceButton}>
+                  <Text style={styles.sourceButtonText}>返回原文</Text>
+                </Pressable>
+              ) : null}
             </View>
           ) : null}
 
@@ -180,6 +199,8 @@ const styles = StyleSheet.create({
     color: '#475569',
     fontSize: 16,
   },
+  tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+  tag: { color: '#4d5f19', backgroundColor: '#dff0a8', borderRadius: 10, paddingHorizontal: 9, paddingVertical: 4, fontSize: 11, fontWeight: '800' },
   meta: {
     color: '#64748b',
     fontSize: 13,
@@ -206,11 +227,29 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
   },
+  exampleItem: {
+    gap: 6,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#dbe3ff',
+  },
+  exampleSense: {
+    alignSelf: 'flex-start',
+    color: '#4d5f19',
+    backgroundColor: '#dff0a8',
+    borderRadius: 10,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    fontSize: 12,
+    fontWeight: '800',
+  },
   exampleMeaning: {
     color: '#475569',
     fontSize: 14,
     lineHeight: 20,
   },
+  sourceButton: { alignSelf: 'flex-start', marginTop: 4, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#dff0a8' },
+  sourceButtonText: { color: '#33420d', fontWeight: '800', fontSize: 13 },
   infoGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',

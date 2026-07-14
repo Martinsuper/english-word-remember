@@ -11,7 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppSettings } from '../appState';
 import { AppStateApi } from '../hooks/useAppState';
-import { importWordsFromExcelLink } from '../domain/importExcelLink';
+import { importWordsFromExcelFile, importWordsFromExcelLink } from '../domain/importExcelLink';
 
 export function SettingsScreen({ app }: { app: AppStateApi }) {
   const [excelLink, setExcelLink] = useState('');
@@ -40,6 +40,41 @@ export function SettingsScreen({ app }: { app: AppStateApi }) {
           ? error.message
           : '请确认链接可以直接访问 .xlsx、CSV、TSV 或公开的 Google Sheets。';
       console.warn('Import Excel link failed', error);
+      Alert.alert('导入失败', message);
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleImportExcelFile = async () => {
+    setIsImporting(true);
+    try {
+      const DocumentPicker = await import('expo-document-picker');
+      const result = await DocumentPicker.getDocumentAsync({
+        type: [
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'text/csv',
+          'text/tab-separated-values',
+        ],
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      if (result.canceled) return;
+      const asset = result.assets[0];
+      const { title, words } = await importWordsFromExcelFile(
+        asset.uri,
+        asset.name,
+        asset.mimeType ?? '',
+      );
+      const count = app.importWordPack(title, words);
+      if (count === 0) {
+        Alert.alert('没有导入到词条', '请确认文件包含“单词、释义、例句JSON”等表头。');
+        return;
+      }
+      Alert.alert('导入成功', `已导入并切换到 ${count} 个词条，多义项例句已保留。`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '无法导入所选 Excel 文件。';
+      console.warn('Import local Excel failed', error);
       Alert.alert('导入失败', message);
     } finally {
       setIsImporting(false);
@@ -211,8 +246,16 @@ export function SettingsScreen({ app }: { app: AppStateApi }) {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>导入 Excel 数据</Text>
           <Text style={styles.helpText}>
-            只粘贴 Excel 链接。支持可直接下载的 .xlsx、CSV/TSV 链接，以及公开的 Google Sheets 链接。
+            可直接选择本机 .xlsx、CSV、TSV 文件；支持“例句JSON”多义项结构，也兼容旧版例句列。
           </Text>
+          <Pressable
+            onPress={handleImportExcelFile}
+            disabled={isImporting}
+            style={[styles.primaryButton, isImporting ? styles.disabledButton : null]}
+          >
+            <Text style={styles.primaryButtonText}>{isImporting ? '正在导入...' : '选择本地 Excel 文件'}</Text>
+          </Pressable>
+          <Text style={styles.linkDivider}>或通过公开链接导入</Text>
           <TextInput
             value={excelLink}
             onChangeText={setExcelLink}
@@ -439,6 +482,11 @@ const styles = StyleSheet.create({
   },
   disabledButton: {
     opacity: 0.6,
+  },
+  linkDivider: {
+    color: '#64748b',
+    fontSize: 12,
+    textAlign: 'center',
   },
   dangerButton: {
     backgroundColor: '#7f1d1d',

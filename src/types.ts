@@ -1,5 +1,11 @@
 export type ReviewRating = 'again' | 'hard' | 'good';
 
+export type WordExample = {
+  sense: string;
+  sentence: string;
+  translation: string;
+};
+
 export type Word = {
   id: string;
   term: string;
@@ -7,6 +13,8 @@ export type Word = {
   meaning: string;
   example: string;
   exampleMeaning: string;
+  examples?: WordExample[];
+  tags?: string[];
   sourceBook?: string;
   sourcePage?: number;
   rawText?: string;
