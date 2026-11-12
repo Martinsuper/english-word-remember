@@ -1,10 +1,13 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { PrimaryButton } from '../components/PrimaryButton';
 import { RatingButton } from '../components/RatingButton';
 import { AppStateApi } from '../hooks/useAppState';
 import { getWordProgressLabel, localDateKey } from '../domain/review';
 import { ReviewRating } from '../types';
 import { getWordExamples } from '../domain/wordExamples';
+import { colors, pressedOpacity, radius, spacing } from '../theme';
 
 export function WordDetailScreen({
   app,
@@ -28,9 +31,7 @@ export function WordDetailScreen({
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.emptyWrap}>
           <Text style={styles.emptyText}>没有找到这个单词。</Text>
-          <Pressable onPress={onBack} style={styles.backButton}>
-            <Text style={styles.backButtonText}>返回</Text>
-          </Pressable>
+          <PrimaryButton label="返回" onPress={onBack} variant="soft" />
         </View>
       </SafeAreaView>
     );
@@ -49,24 +50,45 @@ export function WordDetailScreen({
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.container}>
+      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
         <View style={styles.topRow}>
-          <Pressable onPress={onBack} style={styles.backButton}>
-            <Text style={styles.backButtonText}>返回</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="返回"
+            onPress={onBack}
+            style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
+          >
+            <Ionicons name="chevron-back" size={20} color={colors.textPrimary} />
           </Pressable>
           <View style={styles.topActions}>
-            <Pressable onPress={() => onSpeakWord(word.term)} style={styles.secondaryButton}>
-              <Text style={styles.secondaryButtonText}>朗读</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="朗读单词"
+              onPress={() => onSpeakWord(word.term)}
+              style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
+            >
+              <Ionicons name="volume-medium-outline" size={20} color={colors.accent} />
             </Pressable>
-            <Pressable onPress={() => app.toggleFavorite(wordId)} style={styles.favoriteButton}>
-              <Text style={styles.favoriteButtonText}>{favorite ? '已收藏' : '收藏'}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={favorite ? '取消收藏' : '收藏'}
+              onPress={() => app.toggleFavorite(wordId)}
+              style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
+            >
+              <Ionicons
+                name={favorite ? 'star' : 'star-outline'}
+                size={20}
+                color={favorite ? colors.accent : colors.textSecondary}
+              />
             </Pressable>
           </View>
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.word}>{word.term}</Text>
-          <Text style={styles.phonetic}>{word.phonetic}</Text>
+          <View style={styles.wordHeader}>
+            <Text style={styles.word}>{word.term}</Text>
+            {word.phonetic ? <Text style={styles.phonetic}>{word.phonetic}</Text> : null}
+          </View>
           {word.tags && word.tags.length > 0 ? (
             <View style={styles.tagRow}>
               {word.tags.map((tag) => <Text key={tag} style={styles.tag}>{tag}</Text>)}
@@ -99,7 +121,8 @@ export function WordDetailScreen({
               </Text>
               {word.rawText ? <Text style={styles.exampleMeaning}>{word.rawText}</Text> : null}
               {word.id.startsWith('reading-') && onOpenSource ? (
-                <Pressable onPress={onOpenSource} style={styles.sourceButton}>
+                <Pressable onPress={onOpenSource} style={({ pressed }) => [styles.sourceButton, pressed && styles.pressed]}>
+                  <Ionicons name="book-outline" size={14} color={colors.accent} />
                   <Text style={styles.sourceButtonText}>返回原文</Text>
                 </Pressable>
               ) : null}
@@ -137,151 +160,54 @@ function Info({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#101418',
-  },
-  container: {
-    padding: 20,
-    gap: 16,
-  },
-  topRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  topActions: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  backButton: {
-    backgroundColor: '#18212b',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 14,
-  },
-  backButtonText: {
-    color: '#f8fafc',
-    fontWeight: '700',
-  },
-  secondaryButton: {
-    backgroundColor: '#e2e8f0',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 14,
-  },
-  secondaryButtonText: {
-    color: '#0f172a',
-    fontWeight: '800',
-  },
-  favoriteButton: {
-    backgroundColor: '#f8fafc',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 14,
-  },
-  favoriteButtonText: {
-    color: '#0f172a',
-    fontWeight: '800',
-  },
-  card: {
-    backgroundColor: '#f8fafc',
-    borderRadius: 28,
-    padding: 20,
-    gap: 14,
-  },
-  word: {
-    color: '#0f172a',
-    fontSize: 38,
-    fontWeight: '800',
-  },
-  phonetic: {
-    color: '#475569',
-    fontSize: 16,
-  },
-  tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
-  tag: { color: '#4d5f19', backgroundColor: '#dff0a8', borderRadius: 10, paddingHorizontal: 9, paddingVertical: 4, fontSize: 11, fontWeight: '800' },
-  meta: {
-    color: '#64748b',
-    fontSize: 13,
-  },
-  sectionBox: {
-    borderRadius: 20,
-    backgroundColor: '#eef2ff',
-    padding: 16,
-    gap: 8,
-  },
-  sectionTitle: {
-    color: '#1e293b',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  definition: {
-    color: '#0f172a',
-    fontSize: 18,
-    fontWeight: '700',
-    lineHeight: 26,
-  },
-  example: {
-    color: '#334155',
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  exampleItem: {
-    gap: 6,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#dbe3ff',
-  },
-  exampleSense: {
-    alignSelf: 'flex-start',
-    color: '#4d5f19',
-    backgroundColor: '#dff0a8',
-    borderRadius: 10,
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  exampleMeaning: {
-    color: '#475569',
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  sourceButton: { alignSelf: 'flex-start', marginTop: 4, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#dff0a8' },
-  sourceButtonText: { color: '#33420d', fontWeight: '800', fontSize: 13 },
-  infoGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  infoCard: {
-    width: '48%',
-    backgroundColor: '#18212b',
-    borderRadius: 16,
-    padding: 14,
-  },
-  infoLabel: {
-    color: '#94a3b8',
-    fontSize: 12,
-  },
-  infoValue: {
-    color: '#f8fafc',
-    fontSize: 16,
-    fontWeight: '800',
-    marginTop: 5,
-  },
-  ratingRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  emptyWrap: {
-    flex: 1,
+  safeArea: { flex: 1, backgroundColor: colors.bg },
+  container: { padding: spacing.xl, gap: spacing.lg },
+  topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  topActions: { flexDirection: 'row', gap: spacing.sm + 2 },
+  iconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.full,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 14,
   },
-  emptyText: {
-    color: '#f8fafc',
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.xxl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.xl,
+    gap: spacing.lg - 2,
   },
+  wordHeader: { gap: 4 },
+  word: { color: colors.textPrimary, fontSize: 36, fontWeight: '800', letterSpacing: -0.8 },
+  phonetic: { color: colors.accent, fontSize: 16 },
+  tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+  tag: { color: colors.accent, backgroundColor: colors.accentMuted, borderRadius: radius.sm - 2, paddingHorizontal: 9, paddingVertical: 4, fontSize: 11, fontWeight: '600' },
+  meta: { color: colors.textTertiary, fontSize: 13 },
+  sectionBox: {
+    borderRadius: radius.lg,
+    backgroundColor: colors.surfaceAlt,
+    padding: spacing.lg,
+    gap: spacing.sm,
+  },
+  sectionTitle: { fontSize: 12, fontWeight: '600' as const, letterSpacing: 0.4, color: colors.textTertiary },
+  definition: { color: colors.textPrimary, fontSize: 17, fontWeight: '600', lineHeight: 25 },
+  example: { color: colors.textPrimary, fontSize: 15, lineHeight: 22, opacity: 0.92 },
+  exampleItem: { gap: 6, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  exampleSense: { alignSelf: 'flex-start', color: colors.accent, backgroundColor: colors.accentMuted, borderRadius: radius.sm - 2, paddingHorizontal: 9, paddingVertical: 4, fontSize: 12, fontWeight: '600' },
+  exampleMeaning: { color: colors.textSecondary, fontSize: 14, lineHeight: 20 },
+  sourceButton: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', marginTop: 4, borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.accentMuted },
+  sourceButtonText: { color: colors.accent, fontWeight: '600', fontSize: 13 },
+  infoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm + 2 },
+  infoCard: { width: '48.5%', backgroundColor: colors.surfaceAlt, borderRadius: radius.lg, padding: 14, flexGrow: 1 },
+  infoLabel: { color: colors.textTertiary, fontSize: 12, fontWeight: '500' },
+  infoValue: { color: colors.textPrimary, fontSize: 16, fontWeight: '700', marginTop: 5 },
+  ratingRow: { flexDirection: 'row', gap: spacing.sm + 2 },
+  emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14 },
+  emptyText: { color: colors.textSecondary },
+  pressed: { opacity: pressedOpacity },
 });

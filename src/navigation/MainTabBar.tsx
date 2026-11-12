@@ -1,16 +1,32 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { getFocusedRouteNameFromRoute } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { colors } from '../theme';
 
-const tabDefs: { key: string; label: string; shortLabel: string }[] = [
-  { key: 'HomeTab', label: '今日', shortLabel: '01' },
-  { key: 'ReadingTab', label: '阅读', shortLabel: '02' },
-  { key: 'PlanTab', label: '计划', shortLabel: '03' },
-  { key: 'FavoritesTab', label: '收藏', shortLabel: '04' },
-  { key: 'SettingsTab', label: '我的', shortLabel: '05' },
+type TabIconName =
+  | 'home-outline'
+  | 'home'
+  | 'book-outline'
+  | 'book'
+  | 'calendar-outline'
+  | 'calendar'
+  | 'star-outline'
+  | 'star'
+  | 'person-outline'
+  | 'person';
+
+const tabDefs: { key: string; label: string; icon: TabIconName; activeIcon: TabIconName }[] = [
+  { key: 'HomeTab', label: '今日', icon: 'home-outline', activeIcon: 'home' },
+  { key: 'ReadingTab', label: '阅读', icon: 'book-outline', activeIcon: 'book' },
+  { key: 'PlanTab', label: '计划', icon: 'calendar-outline', activeIcon: 'calendar' },
+  { key: 'FavoritesTab', label: '收藏', icon: 'star-outline', activeIcon: 'star' },
+  { key: 'SettingsTab', label: '我的', icon: 'person-outline', activeIcon: 'person' },
 ];
 
 export function MainTabBar({ state, navigation }: BottomTabBarProps) {
+  const insets = useSafeAreaInsets();
   const focusedRoute = state.routes[state.index];
   const focusedNestedRoute = getFocusedRouteNameFromRoute(focusedRoute);
 
@@ -21,11 +37,12 @@ export function MainTabBar({ state, navigation }: BottomTabBarProps) {
   }
 
   return (
-    <View style={styles.shell}>
+    <View style={[styles.shell, { paddingBottom: Math.max(10, insets.bottom) }]}>
       <View style={styles.bar}>
         {state.routes.map((route, index) => {
           const isFocused = state.index === index;
-          const tabDef = tabDefs[index] || { key: route.name, label: route.name, shortLabel: '??' };
+          const tabDef =
+            tabDefs[index] || { key: route.name, label: route.name, icon: 'home-outline' as TabIconName, activeIcon: 'home' as TabIconName };
 
           const onPress = () => {
             const event = navigation.emit({
@@ -44,9 +61,13 @@ export function MainTabBar({ state, navigation }: BottomTabBarProps) {
               accessibilityState={{ selected: isFocused }}
               key={route.key}
               onPress={onPress}
-              style={({ pressed }) => [styles.tab, isFocused && styles.activeTab, pressed && styles.pressed]}
+              style={({ pressed }) => [styles.tab, pressed && styles.pressed]}
             >
-              <Text style={[styles.index, isFocused && styles.activeIndex]}>{tabDef.shortLabel}</Text>
+              <Ionicons
+                name={isFocused ? tabDef.activeIcon : tabDef.icon}
+                size={22}
+                color={isFocused ? colors.accent : colors.textTertiary}
+              />
               <Text style={[styles.label, isFocused && styles.activeLabel]}>{tabDef.label}</Text>
             </Pressable>
           );
@@ -57,20 +78,16 @@ export function MainTabBar({ state, navigation }: BottomTabBarProps) {
 }
 
 const styles = StyleSheet.create({
-  shell: { backgroundColor: '#0b100e', paddingHorizontal: 14, paddingTop: 8, paddingBottom: 10 },
+  shell: { backgroundColor: colors.bg, paddingHorizontal: 12, paddingTop: 8 },
   bar: {
     flexDirection: 'row',
-    padding: 5,
-    borderRadius: 22,
-    backgroundColor: '#151c18',
-    borderWidth: 1,
-    borderColor: '#263129',
+    paddingTop: 6,
+    paddingBottom: 4,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
   },
-  tab: { flex: 1, minHeight: 48, borderRadius: 17, alignItems: 'center', justifyContent: 'center', gap: 2 },
-  activeTab: { backgroundColor: '#eef7d5' },
-  index: { color: '#637168', fontSize: 9, fontWeight: '900', letterSpacing: 1 },
-  activeIndex: { color: '#566b17' },
-  label: { color: '#aab5ad', fontWeight: '800', fontSize: 12 },
-  activeLabel: { color: '#172009' },
-  pressed: { opacity: 0.72 },
+  tab: { flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center', gap: 2 },
+  label: { color: colors.textTertiary, fontWeight: '500', fontSize: 10 },
+  activeLabel: { color: colors.accent, fontWeight: '600' },
+  pressed: { opacity: 0.7 },
 });

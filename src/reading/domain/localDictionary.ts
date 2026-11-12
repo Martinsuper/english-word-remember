@@ -3,12 +3,26 @@ import { normalizeWord } from './wordSelection';
 
 export type LocalDictionaryMatch = { word: Word; queriedTerm: string };
 
+// 每个 pack 只建一次归一化索引，避免每次点词都全量 flatMap + new Map。
+const packIndexCache = new WeakMap<WordPack, Map<string, Word>>();
+
+function getPackIndex(pack: WordPack): Map<string, Word> {
+  let index = packIndexCache.get(pack);
+  if (!index) {
+    index = new Map(pack.words.map((word) => [normalizeWord(word.term), word]));
+    packIndexCache.set(pack, index);
+  }
+  return index;
+}
+
 export function lookupLocalWord(packs: WordPack[], rawTerm: string): LocalDictionaryMatch | null {
-  const words = packs.flatMap((pack) => pack.words);
-  const byTerm = new Map(words.map((word) => [normalizeWord(word.term), word]));
-  for (const candidate of wordFormCandidates(rawTerm)) {
-    const word = byTerm.get(candidate);
-    if (word) return { word, queriedTerm: candidate };
+  // 倒序遍历、首个命中即返回，等价于原先"后包覆盖先包"的单 Map 语义。
+  for (let packIndex = packs.length - 1; packIndex >= 0; packIndex--) {
+    const byTerm = getPackIndex(packs[packIndex]);
+    for (const candidate of wordFormCandidates(rawTerm)) {
+      const word = byTerm.get(candidate);
+      if (word) return { word, queriedTerm: candidate };
+    }
   }
   return null;
 }

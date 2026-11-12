@@ -12,6 +12,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { StatusBar } from 'expo-status-bar';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { readAsStringAsync } from 'expo-file-system/legacy';
+import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { bookRepository } from '../../infrastructure/database/repositories/bookRepository';
@@ -21,16 +22,72 @@ import type { ReadingChapter, ReadingLocator } from '../../domain/models';
 import type { ReadingStackParamList } from '../../../navigation/types';
 import type { AppStateApi } from '../../../hooks/useAppState';
 import { LookupSheet, LookupData } from '../components/LookupSheet';
+import { RecallCoachModal } from '../components/RecallCoachModal';
 import { isValidWordSelection, extractSentence } from '../../domain/wordSelection';
 
 type NavProp = NativeStackNavigationProp<ReadingStackParamList>;
 
 type BridgeMessage =
   | { type: 'READY'; chapterId: string }
+  | { type: 'RESTORED'; chapterId: string }
   | { type: 'PROGRESS'; chapterId: string; progression: number }
   | { type: 'WORD_TAP'; word: string; contextBefore: string; contextAfter: string; progression: number }
   | { type: 'LINK_TAP'; href: string }
+  | { type: 'RECALL_CONTEXT'; mode: 'paragraph' | 'chapter'; text: string }
   | { type: 'CONTROLS_TOGGLE' };
+
+type ReaderColors = {
+  background: string;
+  surface: string;
+  border: string;
+  text: string;
+  muted: string;
+  accent: string;
+};
+
+const LIGHT_READER_COLORS: ReaderColors = {
+  background: '#F5F0E6', surface: '#ECE5D8', border: '#D8CEBD', text: '#302E2A', muted: '#777168', accent: '#8A6336',
+};
+const DARK_READER_COLORS: ReaderColors = {
+  background: '#171816', surface: '#21221F', border: '#343630', text: '#E7E3D9', muted: '#A8A49A', accent: '#C5A86A',
+};
+
+function getReaderColors(dark: boolean): ReaderColors {
+  return dark ? DARK_READER_COLORS : LIGHT_READER_COLORS;
+}
+
+// 阅读器全部可变样式收敛为 CSS 变量：首次加载内联在 :root，之后改设置只注入脚本更新变量，
+// 不再因字号/主题等变更重建 HTML 导致 WebView 整页 reload。
+function readerStyleVariables(settings: ReaderSettings, dark: boolean): Record<string, string> {
+  const colors = getReaderColors(dark);
+  return {
+    '--reader-bg': colors.background,
+    '--reader-surface': colors.surface,
+    '--reader-border': colors.border,
+    '--reader-text': colors.text,
+    '--reader-muted': colors.muted,
+    '--reader-accent': colors.accent,
+    '--reader-accent-soft': `${colors.accent}80`,
+    '--reader-selection-bg': dark ? '#685936' : '#DFC58E',
+    '--reader-font-size': `${settings.fontSize}px`,
+    '--reader-line-height': String(settings.lineHeight),
+    '--reader-pad-x': `${settings.marginSize}px`,
+    '--reader-pad-top': `${settings.marginSize + 2}px`,
+    '--reader-font-body': settings.fontFamily === 'serif'
+      ? "Charter, 'Iowan Old Style', 'Palatino Linotype', Georgia, serif"
+      : "-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif",
+  };
+}
+
+function applyReaderStylePatch(settings: ReaderSettings, dark: boolean): string {
+  const statements = Object.entries(readerStyleVariables(settings, dark))
+    .map(([name, value]) => `root.style.setProperty('${name}', ${JSON.stringify(value)});`)
+    .join(' ');
+  return `(() => {
+    const root = document.documentElement;
+    ${statements}
+  })(); true;`;
+}
 
 export function ReaderScreen({ app }: { app: AppStateApi }) {
   const systemColorScheme = useColorScheme();
@@ -49,6 +106,7 @@ export function ReaderScreen({ app }: { app: AppStateApi }) {
   const [controlsVisible, setControlsVisible] = useState(false);
   const [lookupData, setLookupData] = useState<LookupData | null>(null);
   const [bookTitle, setBookTitle] = useState('阅读原文');
+  const [recallContext, setRecallContext] = useState<{ mode: 'paragraph' | 'chapter'; text: string } | null>(null);
   const [readerSettings, setReaderSettings] = useState<ReaderSettings>({
     fontSize: 18, lineHeight: 1.65, marginSize: 20, theme: 'dark', fontFamily: 'serif', tapLookupEnabled: true,
   });
@@ -56,12 +114,20 @@ export function ReaderScreen({ app }: { app: AppStateApi }) {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const restoreLocatorRef = useRef<ReadingLocator | undefined>(initialLocator);
   const latestLocatorRef = useRef<ReadingLocator | undefined>(initialLocator);
+  const restoringRef = useRef(Boolean(initialLocator));
   const dark = readerSettings.theme === 'system'
     ? systemColorScheme !== 'light'
     : readerSettings.theme === 'dark';
-  const readerColors = dark
-    ? { background: '#171816', surface: '#21221F', border: '#343630', text: '#E7E3D9', muted: '#A8A49A', accent: '#C5A86A' }
-    : { background: '#F5F0E6', surface: '#ECE5D8', border: '#D8CEBD', text: '#302E2A', muted: '#777168', accent: '#8A6336' };
+  const readerColors = getReaderColors(dark);
+
+  // ref 镜像：注入样式补丁与桥接消息回调需要读到最新设置，而不必进入依赖数组。
+  const webViewReadyRef = useRef(false);
+  const currentChapterIndexRef = useRef(currentChapterIndex);
+  currentChapterIndexRef.current = currentChapterIndex;
+  const readerSettingsRef = useRef(readerSettings);
+  readerSettingsRef.current = readerSettings;
+  const darkRef = useRef(dark);
+  darkRef.current = dark;
 
   useEffect(() => {
     loadChapters();
@@ -74,7 +140,15 @@ export function ReaderScreen({ app }: { app: AppStateApi }) {
     if (chapters.length > 0 && currentChapterIndex >= 0 && currentChapterIndex < chapters.length) {
       loadChapterContent(currentChapterIndex);
     }
-  }, [chapters, currentChapterIndex, readerSettings, dark]);
+    // 设置变更不重载章节：样式通过 applyReaderStylePatch 注入更新（见下方 effect）。
+  }, [chapters, currentChapterIndex]);
+
+  useEffect(() => {
+    if (!webViewReadyRef.current) return;
+    webViewRef.current?.injectJavaScript(
+      applyReaderStylePatch(readerSettingsRef.current, darkRef.current),
+    );
+  }, [readerSettings, dark]);
 
   const loadChapters = async () => {
     try {
@@ -91,6 +165,7 @@ export function ReaderScreen({ app }: { app: AppStateApi }) {
       if (locator) {
         restoreLocatorRef.current = locator;
         latestLocatorRef.current = locator;
+        restoringRef.current = true;
         const idx = linearChapters.findIndex((ch) => ch.id === locator.chapterId);
         if (idx >= 0) setCurrentChapterIndex(idx);
       }
@@ -107,33 +182,48 @@ export function ReaderScreen({ app }: { app: AppStateApi }) {
     const chapter = chapters[index];
     if (!chapter) return;
 
+    webViewReadyRef.current = false;
     try {
       const html = await readAsStringAsync(chapter.extractedPath);
-      const locator = restoreLocatorRef.current?.chapterId === chapter.id ? restoreLocatorRef.current : undefined;
+      // 快速连点切章时旧章节可能后返回，过期内容直接丢弃。
+      if (index !== currentChapterIndexRef.current) return;
+      const locator = restoreLocatorRef.current?.chapterId === chapter.id
+        ? restoreLocatorRef.current
+        : latestLocatorRef.current?.chapterId === chapter.id
+          ? latestLocatorRef.current
+          : undefined;
+      restoringRef.current = Boolean(locator && (locator.progression ?? 0) > 0);
       const wrapped = wrapInReaderShell(html, chapter.id, locator);
       setChapterHtml(wrapped);
     } catch (error) {
+      if (index !== currentChapterIndexRef.current) return;
       console.error('Failed to load chapter content:', error);
       setChapterHtml(wrapInReaderShell('<p>无法加载章节内容</p>', chapter.id));
     }
   };
 
   const wrapInReaderShell = (content: string, chapterId: string, locator?: ReadingLocator): string => {
+    const cssVars = Object.entries(readerStyleVariables(readerSettings, dark))
+      .map(([name, value]) => `${name}: ${value};`)
+      .join('\n    ');
     return `<!DOCTYPE html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0">
 <style>
+  :root {
+    ${cssVars}
+  }
   * { box-sizing: border-box; }
-  html { background: ${readerColors.background}; }
+  html { background: var(--reader-bg); }
   body {
-    font-family: ${readerSettings.fontFamily === 'serif' ? "Charter, 'Iowan Old Style', 'Palatino Linotype', Georgia, serif" : "-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif"};
-    font-size: ${readerSettings.fontSize}px;
-    line-height: ${readerSettings.lineHeight};
+    font-family: var(--reader-font-body);
+    font-size: var(--reader-font-size);
+    line-height: var(--reader-line-height);
     letter-spacing: 0.006em;
-    color: ${readerColors.text};
-    background-color: ${readerColors.background};
-    padding: ${readerSettings.marginSize + 2}px ${readerSettings.marginSize}px 40px;
+    color: var(--reader-text);
+    background-color: var(--reader-bg);
+    padding: var(--reader-pad-top) var(--reader-pad-x) 40px;
     margin: 0;
     word-wrap: break-word;
     overflow-wrap: break-word;
@@ -143,11 +233,11 @@ export function ReaderScreen({ app }: { app: AppStateApi }) {
     -webkit-user-select: text;
     user-select: text;
   }
-  body, body * { border-color: ${readerColors.border}; }
+  body, body * { border-color: var(--reader-border); }
   img { max-width: 100%; height: auto; border-radius: 8px; margin: 1.1em auto; display: block; }
-  a { color: ${readerColors.accent}; text-decoration-color: ${readerColors.accent}80; text-underline-offset: 0.15em; }
+  a { color: var(--reader-accent); text-decoration-color: var(--reader-accent-soft); text-underline-offset: 0.15em; }
   h1, h2, h3, h4, h5, h6 {
-    color: ${readerColors.text};
+    color: var(--reader-text);
     font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
     letter-spacing: -0.018em;
     margin: 1.5em 0 0.65em;
@@ -157,14 +247,14 @@ export function ReaderScreen({ app }: { app: AppStateApi }) {
   h2 { font-size: 1.38em; }
   h3 { font-size: 1.18em; }
   p { margin: 0 0 1em; }
-  blockquote { border-left: 3px solid ${readerColors.accent}; padding: 0.15em 0 0.15em 1em; margin: 1.3em 0; color: ${readerColors.muted}; }
+  blockquote { border-left: 3px solid var(--reader-accent); padding: 0.15em 0 0.15em 1em; margin: 1.3em 0; color: var(--reader-muted); }
   table { border-collapse: collapse; width: 100%; margin: 1em 0; }
-  th, td { border: 1px solid ${readerColors.border}; padding: 0.6em; text-align: left; }
-  th { background: ${readerColors.surface}; }
+  th, td { border: 1px solid var(--reader-border); padding: 0.6em; text-align: left; }
+  th { background: var(--reader-surface); }
   ul, ol { padding-left: 1.5em; }
   li { margin: 0.38em 0; }
-  hr { border: 0; border-top: 1px solid ${readerColors.border}; margin: 1.8em 0; }
-  ::selection { background: ${dark ? '#685936' : '#DFC58E'}; color: ${readerColors.text}; }
+  hr { border: 0; border-top: 1px solid var(--reader-border); margin: 1.8em 0; }
+  ::selection { background: var(--reader-selection-bg); color: var(--reader-text); }
 </style>
 </head>
 <body data-chapter-id="${chapterId}">
@@ -179,16 +269,41 @@ ${content}
 
   post({ type: 'READY', chapterId: '${chapterId}' });
   var restoreProgression = ${Math.min(1, Math.max(0, locator?.progression ?? 0))};
+  var restoring = restoreProgression > 0;
+  var restoreObserver = null;
+  function applyRestoredPosition() {
+    var maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    window.scrollTo(0, maxScroll * restoreProgression);
+  }
+  function finishRestore() {
+    applyRestoredPosition();
+    restoring = false;
+    if (restoreObserver) restoreObserver.disconnect();
+    post({ type: 'RESTORED', chapterId: '${chapterId}' });
+    setTimeout(reportProgress, 50);
+  }
   if (restoreProgression > 0) {
+    [0, 60, 180, 400, 750].forEach(function(delay) {
+      setTimeout(applyRestoredPosition, delay);
+    });
+    window.addEventListener('load', applyRestoredPosition, { once: true });
+    if (window.ResizeObserver) {
+      restoreObserver = new ResizeObserver(function() {
+        if (restoring) applyRestoredPosition();
+      });
+      restoreObserver.observe(document.documentElement);
+    }
+    setTimeout(finishRestore, 1100);
+  } else {
     setTimeout(function() {
-      var maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
-      window.scrollTo(0, maxScroll * restoreProgression);
-    }, 50);
+      post({ type: 'RESTORED', chapterId: '${chapterId}' });
+    }, 0);
   }
 
   var scrollTimer = null;
   var lastProgression = -1;
   function reportProgress() {
+    if (restoring) return;
     var scrollTop = window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
     var scrollHeight = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight) - window.innerHeight;
     var progression = scrollHeight > 0 ? Math.min(1, Math.max(0, scrollTop / scrollHeight)) : 0;
@@ -283,6 +398,17 @@ ${content}
 
       switch (message.type) {
         case 'READY':
+          webViewReadyRef.current = true;
+          // 页面加载期间设置可能已变化，就绪时立即对齐一次最新样式。
+          webViewRef.current?.injectJavaScript(
+            applyReaderStylePatch(readerSettingsRef.current, darkRef.current),
+          );
+          break;
+        case 'RESTORED':
+          restoringRef.current = false;
+          if (restoreLocatorRef.current?.chapterId === message.chapterId) {
+            restoreLocatorRef.current = undefined;
+          }
           break;
         case 'PROGRESS':
           scheduleSaveProgress(message.chapterId, message.progression);
@@ -291,6 +417,9 @@ ${content}
           handleWordTap(message.word, message.contextBefore, message.contextAfter, message.progression);
           break;
         case 'LINK_TAP':
+          break;
+        case 'RECALL_CONTEXT':
+          if (message.text.trim()) setRecallContext({ mode: message.mode, text: message.text.trim() });
           break;
         case 'CONTROLS_TOGGLE':
           toggleControls();
@@ -334,6 +463,7 @@ ${content}
     latestLocatorRef.current = { chapterId, progression };
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(async () => {
+      saveTimerRef.current = null;
       try {
         const chapterCount = chapters.length;
         const currentIndex = chapters.findIndex((ch) => ch.id === chapterId);
@@ -354,18 +484,26 @@ ${content}
   const saveProgressNow = async () => {
     const chapter = chapters[currentChapterIndex];
     if (!chapter) return;
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const locator = latestLocatorRef.current?.chapterId === chapter.id
+      ? latestLocatorRef.current
+      : { chapterId: chapter.id, progression: 0 };
+    const progression = locator.progression ?? 0;
     try {
       await progressRepository.saveProgress({
         bookId,
-        locator: latestLocatorRef.current?.chapterId === chapter.id
-          ? latestLocatorRef.current
-          : { chapterId: chapter.id, progression: 0 },
+        locator,
         overallProgress: chapters.length > 0
-          ? (currentChapterIndex + (latestLocatorRef.current?.progression ?? 0)) / chapters.length
+          ? (currentChapterIndex + progression) / chapters.length
           : 0,
         updatedAt: new Date().toISOString(),
       });
-    } catch { /* ignore */ }
+    } catch (error) {
+      console.error('[reader] Failed to save progress before exit:', error);
+    }
   };
 
   useEffect(() => {
@@ -403,7 +541,33 @@ ${content}
   const updateReaderSettings = (patch: Partial<ReaderSettings>) => {
     const next = { ...readerSettings, ...patch };
     setReaderSettings(next);
-    settingsRepository.save(next).catch(() => undefined);
+    settingsRepository.save(next).catch((error) => {
+      console.warn('[reader] Failed to persist reader settings:', error);
+    });
+  };
+
+  const requestRecallContext = (mode: 'paragraph' | 'chapter') => {
+    setControlsVisible(false);
+    const script = `(() => {
+      const mode = ${JSON.stringify(mode)};
+      let text = '';
+      if (mode === 'chapter') {
+        text = (document.body.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 12000);
+      } else {
+        const center = window.innerHeight / 2;
+        const candidates = Array.from(document.querySelectorAll('p, li, blockquote'))
+          .filter((element) => (element.textContent || '').trim().length >= 30);
+        candidates.sort((a, b) => {
+          const ar = a.getBoundingClientRect();
+          const br = b.getBoundingClientRect();
+          return Math.abs((ar.top + ar.bottom) / 2 - center) - Math.abs((br.top + br.bottom) / 2 - center);
+        });
+        text = ((candidates[0] && candidates[0].textContent) || document.body.innerText || '')
+          .replace(/\\s+/g, ' ').trim().slice(0, 5000);
+      }
+      window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'RECALL_CONTEXT', mode, text }));
+    })(); true;`;
+    webViewRef.current?.injectJavaScript(script);
   };
 
   if (loading) {
@@ -427,16 +591,6 @@ ${content}
           ref={webViewRef}
           source={{ html: chapterHtml }}
           onMessage={handleMessage}
-          onScroll={(event) => {
-            const chapter = chapters[currentChapterIndex];
-            if (!chapter) return;
-            const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-            const maxScroll = Math.max(0, contentSize.height - layoutMeasurement.height);
-            const progression = maxScroll > 0
-              ? Math.min(1, Math.max(0, contentOffset.y / maxScroll))
-              : 0;
-            scheduleSaveProgress(chapter.id, progression);
-          }}
           style={[styles.webview, { backgroundColor: readerColors.background }]}
           javaScriptEnabled={true}
           domStorageEnabled={true}
@@ -452,7 +606,8 @@ ${content}
         <View style={[styles.bottomMenu, { paddingBottom: Math.max(12, insets.bottom + 6), backgroundColor: readerColors.background, borderTopColor: readerColors.border }]}>
           <View style={styles.menuTitleRow}>
             <Pressable onPress={() => navigation.goBack()} style={[styles.menuActionButton, { backgroundColor: readerColors.surface }]}>
-              <Text style={[styles.menuActionText, { color: readerColors.accent }]}>← 返回</Text>
+              <Ionicons name="chevron-back" size={14} color={readerColors.accent} />
+              <Text style={[styles.menuActionText, { color: readerColors.accent }]}>返回</Text>
             </Pressable>
             <Text style={[styles.chapterTitle, { color: readerColors.text }]} numberOfLines={1}>
               {currentChapter?.title || `Chapter ${currentChapterIndex + 1}`}
@@ -463,12 +618,14 @@ ${content}
           </View>
 
           <View style={styles.settingsGrid}>
-            <Pressable style={[styles.settingButton, { backgroundColor: readerColors.surface }]} onPress={() => updateReaderSettings({ fontSize: Math.max(14, readerSettings.fontSize - 2) })}><Text style={[styles.settingsText, { color: readerColors.accent }]}>A− 字号</Text></Pressable>
-            <Pressable style={[styles.settingButton, { backgroundColor: readerColors.surface }]} onPress={() => updateReaderSettings({ fontSize: Math.min(30, readerSettings.fontSize + 2) })}><Text style={[styles.settingsText, { color: readerColors.accent }]}>A＋ 字号</Text></Pressable>
-            <Pressable style={[styles.settingButton, { backgroundColor: readerColors.surface }]} onPress={() => updateReaderSettings({ theme: dark ? 'light' : 'dark' })}><Text style={[styles.settingsText, { color: readerColors.accent }]}>{dark ? '日间模式' : '夜间模式'}</Text></Pressable>
-            <Pressable style={[styles.settingButton, { backgroundColor: readerColors.surface }]} onPress={() => updateReaderSettings({ lineHeight: readerSettings.lineHeight >= 2.1 ? 1.3 : Math.round((readerSettings.lineHeight + 0.2) * 10) / 10 })}><Text style={[styles.settingsText, { color: readerColors.accent }]}>调整行距</Text></Pressable>
-            <Pressable style={[styles.settingButton, { backgroundColor: readerColors.surface }]} onPress={() => updateReaderSettings({ fontFamily: readerSettings.fontFamily === 'serif' ? 'sans-serif' : 'serif' })}><Text style={[styles.settingsText, { color: readerColors.accent }]}>切换字体</Text></Pressable>
-            <Pressable style={[styles.settingButton, { backgroundColor: readerColors.surface }]} onPress={() => updateReaderSettings({ tapLookupEnabled: !readerSettings.tapLookupEnabled })}><Text style={[styles.settingsText, { color: readerColors.accent }]}>{readerSettings.tapLookupEnabled ? '点击查词：开' : '点击查词：关'}</Text></Pressable>
+            <ReaderSettingButton glyph="A−" label="字号" onPress={() => updateReaderSettings({ fontSize: Math.max(14, readerSettings.fontSize - 2) })} color={readerColors} />
+            <ReaderSettingButton glyph="A＋" label="字号" onPress={() => updateReaderSettings({ fontSize: Math.min(30, readerSettings.fontSize + 2) })} color={readerColors} />
+            <ReaderSettingButton icon={dark ? 'sunny-outline' : 'moon-outline'} label={dark ? '日间模式' : '夜间模式'} onPress={() => updateReaderSettings({ theme: dark ? 'light' : 'dark' })} color={readerColors} />
+            <ReaderSettingButton icon="menu-outline" label="行距" onPress={() => updateReaderSettings({ lineHeight: readerSettings.lineHeight >= 2.1 ? 1.3 : Math.round((readerSettings.lineHeight + 0.2) * 10) / 10 })} color={readerColors} />
+            <ReaderSettingButton icon="text-outline" label="字体" onPress={() => updateReaderSettings({ fontFamily: readerSettings.fontFamily === 'serif' ? 'sans-serif' : 'serif' })} color={readerColors} />
+            <ReaderSettingButton icon={readerSettings.tapLookupEnabled ? 'search' : 'search-outline'} label={readerSettings.tapLookupEnabled ? '查词·开' : '查词·关'} onPress={() => updateReaderSettings({ tapLookupEnabled: !readerSettings.tapLookupEnabled })} color={readerColors} />
+            <ReaderSettingButton icon="sparkles-outline" label="段落回忆" onPress={() => requestRecallContext('paragraph')} color={readerColors} />
+            <ReaderSettingButton icon="document-text-outline" label="章节复述" onPress={() => requestRecallContext('chapter')} color={readerColors} />
           </View>
 
           <View style={styles.chapterNavigation}>
@@ -499,6 +656,12 @@ ${content}
         bookTitle={bookTitle}
         onClose={() => setLookupData(null)}
       />
+      <RecallCoachModal
+        visible={recallContext !== null}
+        mode={recallContext?.mode ?? 'paragraph'}
+        passage={recallContext?.text ?? ''}
+        onClose={() => setRecallContext(null)}
+      />
     </SafeAreaView>
   );
 }
@@ -506,52 +669,19 @@ ${content}
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0b100e' },
   loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  header: {
-    position: 'absolute',
-    top: 42,
-    left: 0,
-    right: 0,
-    zIndex: 10,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderBottomWidth: 1,
-    borderBottomColor: '#263129',
-    backgroundColor: '#0b100e',
-  },
-  headerButton: { minWidth: 60 },
-  headerButtonText: { color: '#a3e635', fontSize: 15, fontWeight: '700' },
   chapterTitle: { flex: 1, color: '#f7f8f3', fontSize: 15, fontWeight: '700', textAlign: 'center' },
   webviewContainer: { flex: 1 },
   webview: { flex: 1, backgroundColor: '#0b100e' },
-  navigation: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 10,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#263129',
-    backgroundColor: '#0b100e',
-  },
-  settingsBar: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 11, minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingVertical: 8, paddingLeft: 12, paddingRight: 58, backgroundColor: '#151c18', borderBottomWidth: StyleSheet.hairlineWidth },
-  settingsText: { color: '#a3e635', fontWeight: '800', fontSize: 14 },
-  readerMenuButton: { position: 'absolute', right: 10, zIndex: 20, width: 36, height: 32, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center' },
-  readerMenuButtonText: { fontSize: 15, lineHeight: 18, fontWeight: '800' },
   collapsedMenuButton: { position: 'absolute', alignSelf: 'center', zIndex: 20, minWidth: 124, height: 40, paddingHorizontal: 18, borderRadius: 20, borderWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center' },
-  bottomMenu: { position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 20, paddingTop: 10, paddingHorizontal: 12, borderTopWidth: StyleSheet.hairlineWidth, borderTopLeftRadius: 18, borderTopRightRadius: 18 },
+  readerMenuButtonText: { fontSize: 15, lineHeight: 18, fontWeight: '700' },
+  menuActionText: { fontSize: 13, fontWeight: '600', marginLeft: 1 },
+  bottomMenu: { position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 20, paddingTop: 10, paddingHorizontal: 14, borderTopWidth: StyleSheet.hairlineWidth, borderTopLeftRadius: 18, borderTopRightRadius: 18 },
   menuTitleRow: { minHeight: 38, flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
-  menuActionButton: { minWidth: 64, minHeight: 34, paddingHorizontal: 10, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  menuActionText: { fontSize: 13, fontWeight: '800' },
-  settingsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 7, marginBottom: 9 },
-  settingButton: { width: '32%', minHeight: 36, paddingHorizontal: 5, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  menuActionButton: { flexDirection: 'row', gap: 2, minWidth: 64, minHeight: 34, paddingHorizontal: 10, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  settingsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 7, marginBottom: 10 },
+  settingButton: { width: '23.5%', minHeight: 52, paddingVertical: 7, borderRadius: 12, alignItems: 'center', justifyContent: 'center', gap: 4 },
+  settingGlyph: { fontSize: 17, fontWeight: '700', lineHeight: 20 },
+  settingLabel: { fontSize: 10, fontWeight: '500' },
   chapterNavigation: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   navButton: {
     paddingHorizontal: 16,
@@ -562,23 +692,57 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   navButtonDisabled: { opacity: 0.3 },
-  navButtonText: { color: '#a3e635', fontWeight: '700', fontSize: 13 },
+  navButtonText: { color: '#a3e635', fontWeight: '600', fontSize: 13 },
   chapterIndicator: { color: '#829087', fontSize: 13 },
 });
 
+/** 阅读菜单设置按钮：图标/字形 + 短标签，颜色跟随阅读器主题。 */
+function ReaderSettingButton({
+  icon,
+  glyph,
+  label,
+  onPress,
+  color,
+}: {
+  icon?: keyof typeof Ionicons.glyphMap;
+  glyph?: string;
+  label: string;
+  onPress: () => void;
+  color: ReaderColors;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+      style={({ pressed }) => [styles.settingButton, { backgroundColor: color.surface }, pressed && { opacity: 0.75 }]}
+    >
+      {glyph ? (
+        <Text style={[styles.settingGlyph, { color: color.accent }]}>{glyph}</Text>
+      ) : icon ? (
+        <Ionicons name={icon} size={17} color={color.accent} />
+      ) : null}
+      <Text style={[styles.settingLabel, { color: color.muted }]}>{label}</Text>
+    </Pressable>
+  );
+}
+
 function parseBridgeMessage(raw: string): BridgeMessage | null {
   const value = JSON.parse(raw) as Record<string, unknown>;
-  if (
-    typeof value.type !== 'string' ||
-    typeof value.chapterId !== 'string' &&
-      value.type !== 'WORD_TAP' &&
-      value.type !== 'LINK_TAP' &&
-      value.type !== 'CONTROLS_TOGGLE'
-  ) return null;
+  if (typeof value.type !== 'string') return null;
+  // 这四类消息不携带 chapterId；其余类型必须携带，避免优先级歧义。
+  const chapterIdOptional =
+    value.type === 'WORD_TAP' ||
+    value.type === 'LINK_TAP' ||
+    value.type === 'RECALL_CONTEXT' ||
+    value.type === 'CONTROLS_TOGGLE';
+  if (!chapterIdOptional && typeof value.chapterId !== 'string') return null;
   if (value.type === 'READY' && typeof value.chapterId === 'string') return value as BridgeMessage;
+  if (value.type === 'RESTORED' && typeof value.chapterId === 'string') return value as BridgeMessage;
   if (value.type === 'PROGRESS' && typeof value.chapterId === 'string' && typeof value.progression === 'number' && value.progression >= 0 && value.progression <= 1) return value as BridgeMessage;
   if (value.type === 'WORD_TAP' && typeof value.word === 'string' && value.word.length <= 80 && typeof value.contextBefore === 'string' && value.contextBefore.length <= 1000 && typeof value.contextAfter === 'string' && value.contextAfter.length <= 1000 && typeof value.progression === 'number') return value as BridgeMessage;
   if (value.type === 'LINK_TAP' && typeof value.href === 'string' && value.href.length <= 2048) return value as BridgeMessage;
+  if (value.type === 'RECALL_CONTEXT' && (value.mode === 'paragraph' || value.mode === 'chapter') && typeof value.text === 'string' && value.text.length <= 15000) return value as BridgeMessage;
   if (value.type === 'CONTROLS_TOGGLE') return value as BridgeMessage;
   return null;
 }

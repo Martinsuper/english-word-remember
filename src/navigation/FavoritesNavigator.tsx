@@ -4,6 +4,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { FavoritesStackParamList, RootStackParamList } from './types';
 import { FavoritesScreen } from '../screens/FavoritesScreen';
 import type { AppStateApi } from '../hooks/useAppState';
+import { colors } from '../theme';
 
 const Stack = createNativeStackNavigator<FavoritesStackParamList>();
 
@@ -14,7 +15,7 @@ export function FavoritesNavigator({ app }: { app: AppStateApi }) {
     <Stack.Navigator
       screenOptions={{
         headerShown: false,
-        contentStyle: { backgroundColor: '#0b100e' },
+        contentStyle: { backgroundColor: colors.bg },
       }}
     >
       <Stack.Screen name="Favorites">

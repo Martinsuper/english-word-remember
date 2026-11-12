@@ -1,6 +1,7 @@
 import type { ReadingLocator } from '../domain/models';
 import { wordContextRepository } from '../infrastructure/database/repositories/wordContextRepository';
 import { normalizeWord } from '../domain/wordSelection';
+import { generateId } from '../../utils/generateId';
 
 export const READING_PACK_ID = 'reading-vocabulary';
 
@@ -38,7 +39,7 @@ export async function addReadingWord(input: AddReadingWordInput): Promise<AddRea
   }
 
   const context = {
-    id: `ctx_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    id: `ctx_${generateId()}`,
     wordId,
     normalizedTerm: normalized,
     surfaceForm: input.surfaceForm,

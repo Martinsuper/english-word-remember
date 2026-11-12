@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { DeckEntry } from '../types';
 import { isDue } from '../domain/review';
+import { colors, pressedOpacity, radius } from '../theme';
 
 export function WordRow({
   entry,
@@ -36,15 +37,16 @@ export function WordRow({
   );
 }
 
+// 注意：卡片自身不带外边距，列表间距由父级容器 gap / FlatList separator 控制。
+
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#151c18',
-    borderRadius: 20,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
     paddingHorizontal: 16,
     paddingVertical: 14,
-    marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#263129',
+    borderColor: colors.border,
   },
   row: {
     flexDirection: 'row',
@@ -60,24 +62,24 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   term: {
-    color: '#f1f4ee',
+    color: colors.textPrimary,
     fontSize: 16,
-    fontWeight: '800',
+    fontWeight: '600',
   },
   meaning: {
-    color: '#829087',
+    color: colors.textSecondary,
     fontSize: 13,
     marginTop: 3,
   },
   meta: {
-    color: '#aab5ad',
+    color: colors.textSecondary,
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '500',
   },
   statusDot: { width: 7, height: 7, borderRadius: 999 },
-  dueDot: { backgroundColor: '#a3e635' },
-  doneDot: { backgroundColor: '#4b5a50' },
+  dueDot: { backgroundColor: colors.accent },
+  doneDot: { backgroundColor: colors.textTertiary },
   pressed: {
-    opacity: 0.75,
+    opacity: pressedOpacity,
   },
 });

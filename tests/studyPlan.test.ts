@@ -6,6 +6,8 @@ import {
   createDailyTask,
   createDefaultStudyPlan,
   getStudyDateKey,
+  pruneDailyTasks,
+  DAILY_TASK_KEEP_DAYS,
 } from '../src/domain/studyPlan';
 import { createInitialDeck } from '../src/domain/review';
 import { DailyTask, StudyPlan, Word } from '../src/types';
@@ -97,4 +99,34 @@ test('同一天不能重复领取第二份提前学习额度', () => {
   assert.equal(first.count, 20);
   assert.equal(second.count, 0);
   assert.deepEqual(second.task.advancedWordIds, first.task.advancedWordIds);
+});
+
+test('pruneDailyTasks 每个词包只保留最近 N 天的任务', () => {
+  const makeTask = (dateKey: string): DailyTask => ({
+    dateKey,
+    planId: 'pack',
+    dueReviewIds: [],
+    newWordIds: [],
+    catchUpWordIds: [],
+    advancedWordIds: [],
+    completedWordIds: [],
+    skippedRelearningIds: [],
+    status: 'completed',
+  });
+
+  const tasks: Record<string, DailyTask> = {};
+  for (let index = 0; index < DAILY_TASK_KEEP_DAYS + 10; index += 1) {
+    const day = new Date(Date.UTC(2026, 0, 1 + index, 12));
+    tasks[day.toISOString().slice(0, 10)] = makeTask(day.toISOString().slice(0, 10));
+  }
+  const dailyTasks = { pack: tasks };
+
+  const pruned = pruneDailyTasks(dailyTasks);
+  assert.equal(Object.keys(pruned.pack).length, DAILY_TASK_KEEP_DAYS);
+  // 保留的是最近的日期，最旧的 10 天被裁掉
+  assert.ok(!pruned.pack['2026-01-01']);
+  assert.ok(pruned.pack['2026-01-11']);
+  assert.ok(pruned.pack['2026-03-11']);
+  // 未传词包的空记录不产生垃圾键
+  assert.deepEqual(pruneDailyTasks({}), {});
 });

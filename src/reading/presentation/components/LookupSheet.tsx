@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -6,7 +6,10 @@ import {
   StyleSheet,
   Modal,
   ActivityIndicator,
+  Alert,
+  ScrollView,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import type { ReadingLocator } from '../../domain/models';
 import { normalizeWord } from '../../domain/wordSelection';
 import { addReadingWord } from '../../application/addReadingVocabulary';
@@ -16,6 +19,14 @@ import { lookupFreeDictionary, OnlineDictionaryEntry } from '../../infrastructur
 import { lookupExamDictionary } from '../../infrastructure/dictionary/examDictionary';
 import { lookupOnlineTranslation, OnlineTranslationEntry } from '../../infrastructure/dictionary/onlineTranslationProvider';
 import { lookupEcdict, EcdictEntry } from '../../infrastructure/dictionary/ecdictProvider';
+import type { ContextWordAnalysis, SentenceAnalysis } from '../../domain/aiReading';
+import { loadAiReadingConfig, isAiConfigured } from '../../infrastructure/ai/aiReadingConfig';
+import { colors, radius, spacing, pressedOpacity } from '../../../theme';
+import {
+  analyzeSentence,
+  analyzeWordInContext,
+  createLocalSentenceAnalysis,
+} from '../../infrastructure/ai/aiReadingService';
 
 export type LookupData = {
   word: string;
@@ -41,6 +52,11 @@ export function LookupSheet({ visible, data, app, onClose, bookTitle }: LookupSh
   const [onlineTranslation, setOnlineTranslation] = useState<OnlineTranslationEntry | null>(null);
   const [ecdictEntry, setEcdictEntry] = useState<EcdictEntry | null>(null);
   const [onlineLoading, setOnlineLoading] = useState(false);
+  const [aiLoading, setAiLoading] = useState<'word' | 'sentence' | null>(null);
+  const [wordAnalysis, setWordAnalysis] = useState<ContextWordAnalysis | null>(null);
+  const [sentenceAnalysis, setSentenceAnalysis] = useState<SentenceAnalysis | null>(null);
+  // AI 请求归属校验：换词后旧请求的结果一律丢弃，避免旧词解析串到新词下。
+  const aiRequestSeqRef = useRef(0);
 
   const queryWord = data?.word ?? '';
   const normalized = normalizeWord(queryWord);
@@ -86,10 +102,23 @@ export function LookupSheet({ visible, data, app, onClose, bookTitle }: LookupSh
     };
   }, [normalized, visible, Boolean(localWord), Boolean(examEntry)]);
 
+  useEffect(() => {
+    if (!visible) return;
+    aiRequestSeqRef.current += 1;
+    setWordAnalysis(null);
+    setSentenceAnalysis(null);
+    setAiLoading(null);
+  }, [visible, data?.sentence, data?.word]);
+
   if (!data) return null;
 
   const handleAdd = async () => {
     if (adding) return;
+    // 在线释义还在查询中时不要把空释义写入生词库。
+    if (onlineLoading && !resolvedMeaning) {
+      setResultMessage('释义查询中，请稍候再试');
+      return;
+    }
     setAdding(true);
 
     try {
@@ -138,6 +167,47 @@ export function LookupSheet({ visible, data, app, onClose, bookTitle }: LookupSh
     onClose();
   };
 
+  const handleAiWord = async () => {
+    if (!data || aiLoading) return;
+    const config = await loadAiReadingConfig();
+    if (!isAiConfigured(config)) {
+      Alert.alert('需要配置 AI', '请前往“我的”页面的“AI 阅读教练”填写接口、密钥和模型。');
+      return;
+    }
+    const seq = ++aiRequestSeqRef.current;
+    setAiLoading('word');
+    try {
+      const analysis = await analyzeWordInContext(config, data.word, data.sentence);
+      if (seq !== aiRequestSeqRef.current) return;
+      setWordAnalysis(analysis);
+    } catch (error) {
+      if (seq !== aiRequestSeqRef.current) return;
+      Alert.alert('AI 解析失败', error instanceof Error ? error.message : '请稍后重试');
+    } finally {
+      if (seq === aiRequestSeqRef.current) setAiLoading(null);
+    }
+  };
+
+  const handleSentenceAnalysis = async () => {
+    if (!data || aiLoading) return;
+    const config = await loadAiReadingConfig();
+    const seq = ++aiRequestSeqRef.current;
+    setAiLoading('sentence');
+    try {
+      const analysis = isAiConfigured(config)
+        ? await analyzeSentence(config, data.sentence)
+        : createLocalSentenceAnalysis(data.sentence);
+      if (seq !== aiRequestSeqRef.current) return;
+      setSentenceAnalysis(analysis);
+    } catch (error) {
+      if (seq !== aiRequestSeqRef.current) return;
+      setSentenceAnalysis(createLocalSentenceAnalysis(data.sentence));
+      Alert.alert('已切换到离线拆分', error instanceof Error ? error.message : 'AI 暂时不可用');
+    } finally {
+      if (seq === aiRequestSeqRef.current) setAiLoading(null);
+    }
+  };
+
   return (
     <Modal
       visible={visible}
@@ -151,13 +221,16 @@ export function LookupSheet({ visible, data, app, onClose, bookTitle }: LookupSh
       <View style={styles.sheet}>
         <View style={styles.handle} />
 
+        <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+
         <View style={styles.wordRow}>
           <Text style={styles.word}>{data.word}</Text>
           <Text style={styles.normalized}>({normalized})</Text>
         </View>
 
-        <Pressable onPress={() => app.speakWord(data.word)} style={styles.speakButton}>
-          <Text style={styles.speakButtonText}>🔊 美式发音</Text>
+        <Pressable onPress={() => app.speakWord(data.word)} style={({ pressed }) => [styles.speakButton, pressed && { opacity: pressedOpacity }]}>
+          <Ionicons name="volume-medium-outline" size={15} color={colors.accent} />
+          <Text style={styles.speakButtonText}>美式发音</Text>
         </Pressable>
 
         {localWord || examEntry || ecdictEntry ? (
@@ -193,6 +266,52 @@ export function LookupSheet({ visible, data, app, onClose, bookTitle }: LookupSh
           <Text style={styles.sentence}>{data.sentence}</Text>
         </View>
 
+        <View style={styles.aiActions}>
+          <Pressable onPress={handleAiWord} disabled={Boolean(aiLoading)} style={({ pressed }) => [styles.aiButton, pressed && { opacity: pressedOpacity }]}>
+            {aiLoading === 'word' ? <ActivityIndicator size="small" color={colors.accent} /> : (
+              <>
+                <Ionicons name="sparkles-outline" size={14} color={colors.accent} />
+                <Text style={styles.aiButtonText}>AI 语境解析</Text>
+              </>
+            )}
+          </Pressable>
+          <Pressable onPress={handleSentenceAnalysis} disabled={Boolean(aiLoading)} style={({ pressed }) => [styles.aiButton, pressed && { opacity: pressedOpacity }]}>
+            {aiLoading === 'sentence' ? <ActivityIndicator size="small" color={colors.accent} /> : (
+              <>
+                <Ionicons name="document-text-outline" size={14} color={colors.accent} />
+                <Text style={styles.aiButtonText}>拆解这句话</Text>
+              </>
+            )}
+          </Pressable>
+        </View>
+
+        {wordAnalysis ? (
+          <View style={styles.analysisCard}>
+            <Text style={styles.analysisTitle}>当前语境</Text>
+            <Text style={styles.analysisPrimary}>{wordAnalysis.meaningInContext}</Text>
+            <Text style={styles.analysisLine}>词块：{wordAnalysis.chunk}</Text>
+            <Text style={styles.analysisLine}>作用：{wordAnalysis.sentenceRole}</Text>
+            <Text style={styles.analysisEnglish}>{wordAnalysis.simpleEnglish}</Text>
+            {wordAnalysis.contrast ? <Text style={styles.analysisHint}>{wordAnalysis.contrast}</Text> : null}
+          </View>
+        ) : null}
+
+        {sentenceAnalysis ? (
+          <View style={styles.analysisCard}>
+            <Text style={styles.analysisTitle}>句子拆解</Text>
+            {sentenceAnalysis.chunks.map((chunk, index) => (
+              <View key={`${chunk.text}-${index}`} style={styles.chunkRow}>
+                <Text style={styles.chunkText}>{chunk.text}</Text>
+                <Text style={styles.chunkRole}>{chunk.role}</Text>
+              </View>
+            ))}
+            <Text style={styles.analysisLine}>主干：{sentenceAnalysis.core}</Text>
+            <Text style={styles.analysisLine}>逻辑：{sentenceAnalysis.logic}</Text>
+            <Text style={styles.analysisPrimary}>{sentenceAnalysis.translation}</Text>
+            <Text style={styles.analysisQuestion}>理解检查：{sentenceAnalysis.checkQuestion}</Text>
+          </View>
+        ) : null}
+
         <View style={styles.actions}>
           <Pressable
             onPress={handleClose}
@@ -216,13 +335,14 @@ export function LookupSheet({ visible, data, app, onClose, bookTitle }: LookupSh
               ]}
             >
               {adding ? (
-                <ActivityIndicator size="small" color="#0b100e" />
+                <ActivityIndicator size="small" color={colors.accentInk} />
               ) : (
                 <Text style={styles.addButtonText}>加入阅读生词</Text>
               )}
             </Pressable>
           )}
         </View>
+        </ScrollView>
       </View>
     </Modal>
   );
@@ -235,81 +355,95 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   sheet: {
-    backgroundColor: '#151c18',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingHorizontal: 20,
-    paddingTop: 12,
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.md,
     paddingBottom: 34,
     borderWidth: 1,
-    borderTopWidth: 0,
-    borderColor: '#263129',
+    borderColor: colors.border,
+    maxHeight: '86%',
   },
   handle: {
     width: 36,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#3a4a40',
+    backgroundColor: colors.border,
     alignSelf: 'center',
-    marginBottom: 16,
+    marginBottom: spacing.lg,
   },
   wordRow: {
     flexDirection: 'row',
     alignItems: 'baseline',
-    marginBottom: 8,
+    marginBottom: spacing.sm,
   },
   word: {
-    color: '#f7f8f3',
+    color: colors.textPrimary,
     fontSize: 24,
     fontWeight: '800',
+    letterSpacing: -0.4,
   },
   normalized: {
-    color: '#829087',
+    color: colors.textSecondary,
     fontSize: 14,
-    marginLeft: 8,
+    marginLeft: spacing.sm,
   },
-  speakButton: { alignSelf: 'flex-start', paddingVertical: 6, paddingHorizontal: 10, marginBottom: 8, borderRadius: 8, backgroundColor: '#263129' },
-  speakButtonText: { color: '#a3e635', fontSize: 13, fontWeight: '700' },
+  speakButton: { flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start', paddingVertical: 6, paddingHorizontal: 10, marginBottom: spacing.sm, borderRadius: radius.sm, backgroundColor: colors.accentMuted },
+  speakButtonText: { color: colors.accent, fontSize: 13, fontWeight: '600' },
   localInfo: {
-    marginBottom: 12,
+    marginBottom: spacing.md,
   },
   phonetic: {
-    color: '#a3e635',
+    color: colors.accent,
     fontSize: 14,
     marginBottom: 4,
   },
-  matchedTerm: { color: '#829087', fontSize: 12, marginBottom: 4 },
-  onlineLabel: { color: '#829087', fontSize: 11, marginBottom: 4 },
-  tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
-  tag: { color: '#172009', backgroundColor: '#dff0a8', borderRadius: 9, paddingHorizontal: 8, paddingVertical: 3, fontSize: 11, fontWeight: '800' },
+  matchedTerm: { color: colors.textSecondary, fontSize: 12, marginBottom: 4 },
+  onlineLabel: { color: colors.textSecondary, fontSize: 11, marginBottom: 4 },
+  tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: spacing.sm },
+  tag: { color: colors.accentInk, backgroundColor: colors.accentSoft, borderRadius: radius.sm - 2, paddingHorizontal: 8, paddingVertical: 3, fontSize: 11, fontWeight: '600' },
   meaning: {
-    color: '#f7f8f3',
+    color: colors.textPrimary,
     fontSize: 15,
     lineHeight: 22,
   },
-  englishMeaning: { color: '#aab5ad', fontSize: 13, lineHeight: 19, marginTop: 8 },
+  englishMeaning: { color: colors.textSecondary, fontSize: 13, lineHeight: 19, marginTop: spacing.sm, fontStyle: 'italic' },
   noEntry: {
-    color: '#829087',
+    color: colors.textSecondary,
     fontSize: 14,
     fontStyle: 'italic',
   },
   sentenceBox: {
-    backgroundColor: '#0b100e',
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 16,
+    backgroundColor: colors.bg,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.lg,
     borderWidth: 1,
-    borderColor: '#1c2420',
+    borderColor: colors.borderSoft,
   },
+  aiActions: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
+  aiButton: { flex: 1, minHeight: 42, flexDirection: 'row', gap: 6, paddingHorizontal: 8, borderRadius: radius.md, backgroundColor: colors.accentMuted, alignItems: 'center', justifyContent: 'center' },
+  aiButtonText: { color: colors.accent, fontSize: 13, fontWeight: '600' },
+  analysisCard: { backgroundColor: colors.bg, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md, marginBottom: 14, gap: 7 },
+  analysisTitle: { color: colors.accent, fontSize: 12, fontWeight: '600', letterSpacing: 0.5 },
+  analysisPrimary: { color: colors.textPrimary, fontSize: 15, lineHeight: 22, fontWeight: '600' },
+  analysisLine: { color: colors.textPrimary, fontSize: 13, lineHeight: 19, opacity: 0.88 },
+  analysisEnglish: { color: colors.textSecondary, fontSize: 13, lineHeight: 19, fontStyle: 'italic' },
+  analysisHint: { color: colors.accent, fontSize: 12, lineHeight: 18, opacity: 0.85 },
+  chunkRow: { borderLeftWidth: 2, borderLeftColor: colors.accent, paddingLeft: 9, marginBottom: 2 },
+  chunkText: { color: colors.textPrimary, fontSize: 14, lineHeight: 20 },
+  chunkRole: { color: colors.textSecondary, fontSize: 11, lineHeight: 16 },
+  analysisQuestion: { color: colors.accent, fontSize: 13, lineHeight: 19, marginTop: 3, opacity: 0.85 },
   sentenceLabel: {
-    color: '#566b17',
+    color: colors.textTertiary,
     fontSize: 11,
-    fontWeight: '800',
+    fontWeight: '600',
     letterSpacing: 1,
     marginBottom: 6,
   },
   sentence: {
-    color: '#aab5ad',
+    color: colors.textSecondary,
     fontSize: 14,
     lineHeight: 20,
   },
@@ -317,43 +451,43 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 12,
+    gap: spacing.md,
   },
   cancelButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: '#1c2420',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
   },
   cancelText: {
-    color: '#aab5ad',
-    fontWeight: '700',
+    color: colors.textSecondary,
+    fontWeight: '600',
     fontSize: 14,
   },
   addButton: {
     flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: '#a3e635',
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.accent,
     alignItems: 'center',
   },
   addButtonDisabled: { opacity: 0.5 },
-  addButtonPressed: { opacity: 0.8 },
+  addButtonPressed: { opacity: pressedOpacity },
   addButtonText: {
-    color: '#0b100e',
-    fontWeight: '800',
+    color: colors.accentInk,
+    fontWeight: '700',
     fontSize: 14,
   },
   addedBadge: {
     flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: '#1c2420',
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
     alignItems: 'center',
   },
   addedText: {
-    color: '#a3e635',
-    fontWeight: '700',
+    color: colors.accent,
+    fontWeight: '600',
     fontSize: 14,
   },
 });

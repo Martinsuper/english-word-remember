@@ -4,6 +4,7 @@ import { parseEpubFile, extractCoverImage, extractEpubResources, EpubImportError
 import { resolveResourcePath } from '../infrastructure/epub/resolveResource';
 import { bookRepository } from '../infrastructure/database/repositories/bookRepository';
 import type { ReadingBook, ReadingChapter } from '../domain/models';
+import { generateId } from '../../utils/generateId';
 
 export type ImportStage = 'copying' | 'validating' | 'parsing' | 'extracting' | 'committing';
 
@@ -22,7 +23,7 @@ export async function importBook(
   fileName: string,
   onProgress?: (progress: ImportProgress) => void,
 ): Promise<ImportResult> {
-  const sessionId = `import_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  const sessionId = `import_${generateId()}`;
   let createdBookId: string | null = null;
 
   try {
@@ -49,7 +50,7 @@ export async function importBook(
     onProgress?.({ stage: 'parsing', percent: 100 });
 
     onProgress?.({ stage: 'extracting', percent: 0 });
-    const bookId = `book_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    const bookId = `book_${generateId()}`;
     createdBookId = bookId;
     const bookDir = await readingFileStore.createBookDir(bookId);
     const extractDir = await readingFileStore.getExtractedDir(bookId);

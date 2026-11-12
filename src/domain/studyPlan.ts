@@ -187,3 +187,25 @@ export function estimatedCompletionDate(unintroduced: number, plan: StudyPlan, f
 export function addDays(value: Date, days: number) {
   return new Date(value.getTime() + days * DAY_MS);
 }
+
+export const DAILY_TASK_KEEP_DAYS = 60;
+
+/**
+ * 每个词包只保留最近 keepDays 天的每日任务，防止 dailyTasks 随使用时间无界膨胀。
+ * dateKey 为 YYYY-MM-DD 格式，可直接按字典序比较。
+ */
+export function pruneDailyTasks(
+  dailyTasks: Record<string, Record<string, DailyTask>>,
+  keepDays = DAILY_TASK_KEEP_DAYS,
+): Record<string, Record<string, DailyTask>> {
+  const pruned: Record<string, Record<string, DailyTask>> = {};
+  for (const [packId, tasks] of Object.entries(dailyTasks)) {
+    const keys = Object.keys(tasks)
+      .sort((a, b) => b.localeCompare(a))
+      .slice(0, keepDays);
+    if (keys.length === 0) continue;
+    pruned[packId] = {};
+    for (const key of keys) pruned[packId][key] = tasks[key];
+  }
+  return pruned;
+}

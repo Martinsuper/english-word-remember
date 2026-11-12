@@ -18,6 +18,9 @@ export type ReviewLogEntry = {
   reviewedAt: string;
 };
 
+// reviewLogs 目前无 UI 消费，仅作为学习记录持久化；设上限防止存储体积无界膨胀。
+export const MAX_REVIEW_LOGS = 500;
+
 export type AppState = {
   deck: DeckEntry[];
   activePackId: string;

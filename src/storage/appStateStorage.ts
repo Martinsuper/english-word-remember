@@ -2,7 +2,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState, defaultSettings } from '../appState';
 import { builtInPacks, getInitialWords } from '../data/builtInPacks';
 import { createInitialDeck } from '../domain/review';
-import { createDefaultStudyPlan } from '../domain/studyPlan';
+import { createDefaultStudyPlan, pruneDailyTasks } from '../domain/studyPlan';
+import {
+  deckProgressFromDeck,
+  mergeProgressIntoDeck,
+} from '../domain/deckProgress';
 import {
   rebuildDeckFromSource,
   remapIdsByTerm,
@@ -10,6 +14,7 @@ import {
   sanitizeReviewState,
   sanitizeDeckList,
 } from '../domain/wordQuality';
+import { MAX_REVIEW_LOGS } from '../appState';
 import { DeckEntry } from '../types';
 
 const STORAGE_KEY = 'kaoyan-flashcards.app.v4';
@@ -120,7 +125,7 @@ function normalizeStringList(value: unknown) {
 }
 
 function normalizeReviewLogList(value: unknown) {
-  return Array.isArray(value)
+  const logs = Array.isArray(value)
     ? value.filter(
         (entry): entry is AppState['reviewLogs'][number] =>
           Boolean(entry) &&
@@ -131,6 +136,7 @@ function normalizeReviewLogList(value: unknown) {
           typeof (entry as { reviewedAt?: unknown }).reviewedAt === 'string',
       )
     : [];
+  return logs.slice(0, MAX_REVIEW_LOGS);
 }
 
 async function getSavedState() {
@@ -162,15 +168,6 @@ async function getSavedCustomPacks(fallback: unknown) {
   return normalizeCustomPacks(fallback);
 }
 
-function hasLearningProgress(entry: DeckEntry) {
-  return (
-    entry.state.repetition > 0 ||
-    entry.state.correctCount > 0 ||
-    entry.state.wrongCount > 0 ||
-    Boolean(entry.state.lastReviewedAt)
-  );
-}
-
 function normalizeDeckProgress(value: unknown): StoredDeckProgress[] {
   if (!Array.isArray(value)) {
     return [];
@@ -195,18 +192,6 @@ function normalizeDeckProgress(value: unknown): StoredDeckProgress[] {
   }
 
   return progress;
-}
-
-function mergeProgressIntoDeck(deck: DeckEntry[], progress: StoredDeckProgress[]) {
-  if (progress.length === 0) {
-    return deck;
-  }
-
-  const progressById = new Map(progress.map((entry) => [entry.id, entry.state]));
-  return deck.map((entry) => {
-    const state = progressById.get(entry.id);
-    return state ? { ...entry, state } : entry;
-  });
 }
 
 function normalizeCustomPacks(value: unknown): AppState['customPacks'] {
@@ -283,7 +268,7 @@ export async function loadAppState(): Promise<AppState> {
       : builtInPacks[0]?.id ?? customPacks[0]?.id ?? '';
     const packProgress = normalizePackProgress((parsed as { packProgress?: unknown }).packProgress);
     const studyPlans = normalizeStudyPlans((parsed as { studyPlans?: unknown }).studyPlans, allPackIds);
-    const dailyTasks = normalizeDailyTasks((parsed as { dailyTasks?: unknown }).dailyTasks, allPackIds);
+    const dailyTasks = pruneDailyTasks(normalizeDailyTasks((parsed as { dailyTasks?: unknown }).dailyTasks, allPackIds));
     if (!studyPlans[activePackId]) studyPlans[activePackId] = createDefaultStudyPlan(activePackId);
     const defaultDeck = createInitialDeck(wordsForPack(activePackId, customPacks));
 
@@ -323,16 +308,14 @@ export async function loadAppState(): Promise<AppState> {
       settings: parsed.settings ? { ...defaultSettings, ...parsed.settings } : defaultSettings,
       searchQuery: typeof parsed.searchQuery === 'string' ? parsed.searchQuery : '',
     };
-  } catch {
+  } catch (error) {
+    console.error('[app-state] Failed to load persisted state, falling back to defaults:', error);
     return createDefaultAppState();
   }
 }
 
 export async function saveAppState(state: AppState) {
-  const activePackProgress = state.deck.filter(hasLearningProgress).map((entry) => ({
-    id: entry.id,
-    state: entry.state,
-  }));
+  const activePackProgress = deckProgressFromDeck(state.deck);
   const customPacksJson = JSON.stringify(state.customPacks);
   const payload: StoredAppState = {
     version: 4,
@@ -347,7 +330,7 @@ export async function saveAppState(state: AppState) {
     settings: state.settings,
     searchQuery: state.searchQuery,
     studyPlans: state.studyPlans,
-    dailyTasks: state.dailyTasks,
+    dailyTasks: pruneDailyTasks(state.dailyTasks),
   };
 
   if (customPacksJson !== lastSavedCustomPacksJson) {

@@ -1,4 +1,4 @@
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, Theme as NavigationTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import type { RootStackParamList } from './types';
 import { RootTabNavigator } from './RootTabNavigator';
@@ -9,8 +9,28 @@ import type { AppStateApi } from '../hooks/useAppState';
 import type { ReviewRating } from '../types';
 import { wordContextRepository } from '../reading/infrastructure/database/repositories/wordContextRepository';
 import { Alert } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import { colors as themeColors } from '../theme';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+
+const navigationTheme: NavigationTheme = {
+  dark: true,
+  colors: {
+    primary: themeColors.accent,
+    background: themeColors.bg,
+    card: themeColors.surface,
+    text: themeColors.textPrimary,
+    border: themeColors.border,
+    notification: themeColors.accent,
+  },
+  fonts: {
+    regular: { fontFamily: 'System', fontWeight: '400' },
+    medium: { fontFamily: 'System', fontWeight: '500' },
+    bold: { fontFamily: 'System', fontWeight: '700' },
+    heavy: { fontFamily: 'System', fontWeight: '800' },
+  },
+};
 
 export function AppNavigator({
   app,
@@ -20,13 +40,15 @@ export function AppNavigator({
   reviewDetailWord: (wordId: string, rating: ReviewRating) => void;
 }) {
   return (
-    <NavigationContainer>
-      <Stack.Navigator
-        screenOptions={{
-          headerShown: false,
-          contentStyle: { backgroundColor: '#0b100e' },
-        }}
-      >
+    <>
+      <StatusBar style="light" />
+      <NavigationContainer theme={navigationTheme}>
+        <Stack.Navigator
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: themeColors.bg },
+          }}
+        >
         <Stack.Screen name="MainTabs">
           {() => <RootTabNavigator app={app} />}
         </Stack.Screen>
@@ -70,6 +92,7 @@ export function AppNavigator({
           )}
         </Stack.Screen>
       </Stack.Navigator>
-    </NavigationContainer>
+      </NavigationContainer>
+    </>
   );
 }

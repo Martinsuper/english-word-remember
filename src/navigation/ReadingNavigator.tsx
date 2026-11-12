@@ -4,6 +4,7 @@ import { BookDetailScreen } from '../reading/presentation/screens/BookDetailScre
 import { ReaderScreen } from '../reading/presentation/screens/ReaderScreen';
 import type { ReadingStackParamList } from './types';
 import type { AppStateApi } from '../hooks/useAppState';
+import { colors } from '../theme';
 
 const Stack = createNativeStackNavigator<ReadingStackParamList>();
 
@@ -12,7 +13,7 @@ export function ReadingNavigator({ app }: { app: AppStateApi }) {
     <Stack.Navigator
       screenOptions={{
         headerShown: false,
-        contentStyle: { backgroundColor: '#0b100e' },
+        contentStyle: { backgroundColor: colors.bg },
       }}
     >
       <Stack.Screen name="Library" component={LibraryScreen} />

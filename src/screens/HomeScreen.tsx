@@ -1,7 +1,11 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { WordRow } from '../components/WordRow';
+import { StatCard } from '../components/StatCard';
+import { ProgressBar } from '../components/ProgressBar';
 import { AppStateApi } from '../hooks/useAppState';
+import { colors, pressedOpacity, radius, spacing, typography } from '../theme';
 
 export function HomeScreen({
   app,
@@ -41,7 +45,7 @@ export function HomeScreen({
             <Text style={styles.brand}>WORD FLOW</Text>
             <Text style={styles.greeting}>今天，轻松记一点。</Text>
           </View>
-          <Pressable accessibilityRole="button" onPress={onOpenSettings} style={styles.packPill}>
+          <Pressable accessibilityRole="button" onPress={onOpenSettings} style={({ pressed }) => [styles.packPill, pressed && styles.pressed]}>
             <Text style={styles.packPillLabel}>当前词库</Text>
             <Text style={styles.packPillValue} numberOfLines={1}>{app.activePack?.title ?? '未选择'}</Text>
           </Pressable>
@@ -63,9 +67,11 @@ export function HomeScreen({
             <Text style={styles.focusUnit}>{isComplete ? '个今日任务已完成' : '个词待完成'}</Text>
           </View>
 
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${Math.max(summary.completed > 0 ? 4 : 0, progress * 100)}%` }]} />
-          </View>
+          <ProgressBar
+            progress={progress}
+            trackColor="#CFDAA9"
+            fillColor={colors.accentDeep}
+          />
 
           <View style={styles.taskBreakdown}>
             <Text style={styles.taskCount}>复习 {summary.reviewCompleted} / {summary.reviewTotal}</Text>
@@ -91,28 +97,36 @@ export function HomeScreen({
         </Pressable>
 
         <View style={styles.statsRow}>
-          <Stat value={`${masteredPercent}%`} label="已掌握" />
+          <StatCard value={`${masteredPercent}%`} label="已掌握" />
           <View style={styles.statDivider} />
-          <Stat value={app.wrongWords.length.toString()} label="薄弱词" />
+          <StatCard value={app.wrongWords.length.toString()} label="薄弱词" />
           <View style={styles.statDivider} />
-          <Stat value={app.favorites.length.toString()} label="已收藏" />
+          <StatCard value={app.favorites.length.toString()} label="已收藏" />
         </View>
 
-        <View style={styles.sectionHeader}>
-          <View>
-            <Text style={styles.sectionEyebrow}>QUICK ACCESS</Text>
-            <Text style={styles.sectionTitle}>快速入口</Text>
-          </View>
+        <View style={styles.section}>
+          <Text style={styles.sectionEyebrow}>QUICK ACCESS</Text>
+          <Text style={styles.sectionTitle}>快速入口</Text>
         </View>
         <View style={styles.quickGrid}>
-          <QuickAction number="01" label="薄弱词" hint="优先补齐记忆缺口" onPress={onOpenWrong} />
-          <QuickAction number="02" label="我的收藏" hint="集中查看重点词" onPress={onOpenFavorites} />
+          <QuickAction
+            icon="flame-outline"
+            label="薄弱词"
+            hint="优先补齐记忆缺口"
+            onPress={onOpenWrong}
+          />
+          <QuickAction
+            icon="star-outline"
+            label="我的收藏"
+            hint="集中查看重点词"
+            onPress={onOpenFavorites}
+          />
         </View>
 
         {app.taskQueue.length > 0 ? (
           <View style={styles.section}>
             <View style={styles.sectionHeaderRow}>
-              <View>
+              <View style={styles.section}>
                 <Text style={styles.sectionEyebrow}>UP NEXT</Text>
                 <Text style={styles.sectionTitle}>接下来学习</Text>
               </View>
@@ -133,29 +147,22 @@ export function HomeScreen({
   );
 }
 
-function Stat({ value, label }: { value: string; label: string }) {
-  return (
-    <View style={styles.stat}>
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
-    </View>
-  );
-}
-
 function QuickAction({
-  number,
+  icon,
   label,
   hint,
   onPress,
 }: {
-  number: string;
+  icon: keyof typeof Ionicons.glyphMap;
   label: string;
   hint: string;
   onPress: () => void;
 }) {
   return (
     <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.quickCard, pressed && styles.pressed]}>
-      <Text style={styles.quickNumber}>{number}</Text>
+      <View style={styles.quickIconWrap}>
+        <Ionicons name={icon} size={18} color={colors.accent} />
+      </View>
       <Text style={styles.quickLabel}>{label}</Text>
       <Text style={styles.quickHint}>{hint}</Text>
     </Pressable>
@@ -163,67 +170,68 @@ function QuickAction({
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#0b100e' },
-  container: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 30, gap: 22 },
-  topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 },
-  brand: { color: '#a3e635', fontSize: 11, letterSpacing: 2.2, fontWeight: '900' },
-  greeting: { color: '#f7f8f3', fontSize: 25, lineHeight: 32, fontWeight: '900', marginTop: 5 },
+  safeArea: { flex: 1, backgroundColor: colors.bg },
+  container: { paddingHorizontal: spacing.xl, paddingTop: spacing.xl, paddingBottom: spacing.xxxl, gap: spacing.xxl },
+  topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing.lg },
+  brand: { ...typography.eyebrow, color: colors.accent },
+  greeting: { color: colors.textPrimary, fontSize: 24, lineHeight: 31, fontWeight: '700', letterSpacing: -0.4, marginTop: 6 },
   packPill: {
-    width: 112,
-    backgroundColor: '#151c18',
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: '#263129',
-    borderRadius: 18,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
     paddingHorizontal: 12,
     paddingVertical: 10,
+    alignItems: 'flex-start',
   },
-  packPillLabel: { color: '#69766e', fontSize: 10, fontWeight: '800' },
-  packPillValue: { color: '#dbe3dc', fontSize: 12, fontWeight: '800', marginTop: 3 },
-  focusCard: { backgroundColor: '#eef7d5', borderRadius: 28, padding: 22, gap: 22 },
-  focusHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
-  focusEyebrow: { color: '#566b17', fontSize: 11, letterSpacing: 1.2, fontWeight: '900' },
-  timeText: { color: '#56634d', fontSize: 12, fontWeight: '800' },
-  focusNumber: { color: '#11180a', fontSize: 68, lineHeight: 72, fontWeight: '900', letterSpacing: -3 },
-  focusUnit: { color: '#34402a', fontSize: 18, fontWeight: '800', marginTop: 2 },
-  progressTrack: { height: 7, borderRadius: 999, backgroundColor: '#cfdaa9', overflow: 'hidden' },
-  progressFill: { height: '100%', borderRadius: 999, backgroundColor: '#607b12' },
-  taskBreakdown: { flexDirection: 'row', flexWrap: 'wrap', gap: 14, marginTop: -10 },
-  taskCount: { color: '#34402a', fontSize: 12, fontWeight: '900' },
+  packPillLabel: { color: colors.textTertiary, fontSize: 10, fontWeight: '600' },
+  packPillValue: { color: colors.textPrimary, fontSize: 12, fontWeight: '600', marginTop: 3 },
+  focusCard: { backgroundColor: colors.accentSoft, borderRadius: radius.xxl, padding: spacing.xxl, gap: spacing.lg },
+  focusHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.md },
+  focusEyebrow: { ...typography.eyebrow, color: colors.accentDeep, letterSpacing: 1.2 },
+  timeText: { color: '#5C6A50', fontSize: 12, fontWeight: '600' },
+  focusNumber: { color: colors.accentInk, fontSize: 56, lineHeight: 62, fontWeight: '800', letterSpacing: -2 },
+  focusUnit: { color: '#3B4730', fontSize: 16, fontWeight: '600', marginTop: 2 },
+  taskBreakdown: { flexDirection: 'row', flexWrap: 'wrap', gap: 14, marginTop: -spacing.xs },
+  taskCount: { color: '#3B4730', fontSize: 12, fontWeight: '600' },
   focusFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 14 },
-  focusHint: { flex: 1, color: '#59664f', fontSize: 12, lineHeight: 18, fontWeight: '700' },
-  primaryCta: { backgroundColor: '#172009', borderRadius: 16, paddingHorizontal: 17, paddingVertical: 12 },
-  primaryCtaText: { color: '#f5f8eb', fontSize: 13, fontWeight: '900' },
+  focusHint: { flex: 1, color: '#5C6A50', fontSize: 12, lineHeight: 18, fontWeight: '500' },
+  primaryCta: { backgroundColor: colors.accentInk, borderRadius: radius.lg, paddingHorizontal: 17, paddingVertical: 12 },
+  primaryCtaText: { color: colors.accentSoft, fontSize: 13, fontWeight: '700' },
   statsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#151c18',
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: '#263129',
-    borderRadius: 22,
-    paddingVertical: 17,
+    borderColor: colors.border,
+    borderRadius: radius.xl,
+    paddingVertical: spacing.lg + 1,
   },
-  stat: { flex: 1, alignItems: 'center', gap: 4 },
-  statValue: { color: '#f7f8f3', fontSize: 21, fontWeight: '900' },
-  statLabel: { color: '#77847b', fontSize: 11, fontWeight: '700' },
-  statDivider: { width: 1, height: 30, backgroundColor: '#2a352d' },
-  section: { gap: 10 },
-  sectionHeader: { marginBottom: -8 },
-  sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
-  sectionEyebrow: { color: '#718077', fontSize: 10, letterSpacing: 1.7, fontWeight: '900' },
-  sectionTitle: { color: '#f1f4ee', fontSize: 20, fontWeight: '900', marginTop: 4 },
-  sectionMeta: { color: '#718077', fontSize: 12, fontWeight: '700' },
-  quickGrid: { flexDirection: 'row', gap: 12 },
+  statDivider: { width: 1, height: 30, backgroundColor: colors.borderSoft },
+  section: { gap: spacing.sm + 2 },
+  sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: spacing.xs },
+  sectionEyebrow: { ...typography.eyebrow, color: colors.textTertiary, fontSize: 10, letterSpacing: 1.6 },
+  sectionTitle: { color: colors.textPrimary, fontSize: 20, fontWeight: '700', letterSpacing: -0.3, marginTop: 4 },
+  sectionMeta: { color: colors.textTertiary, fontSize: 12, fontWeight: '500' },
+  quickGrid: { flexDirection: 'row', gap: spacing.md },
   quickCard: {
     flex: 1,
-    minHeight: 130,
-    backgroundColor: '#151c18',
-    borderRadius: 22,
+    minHeight: 124,
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl,
     borderWidth: 1,
-    borderColor: '#263129',
-    padding: 16,
+    borderColor: colors.border,
+    padding: spacing.lg,
   },
-  quickNumber: { color: '#a3e635', fontSize: 10, letterSpacing: 1.5, fontWeight: '900' },
-  quickLabel: { color: '#f1f4ee', fontSize: 17, fontWeight: '900', marginTop: 22 },
-  quickHint: { color: '#7d8981', fontSize: 12, lineHeight: 18, marginTop: 5 },
-  pressed: { opacity: 0.72 },
+  quickIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.md,
+    backgroundColor: colors.accentMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickLabel: { color: colors.textPrimary, fontSize: 16, fontWeight: '600', marginTop: spacing.lg - 4 },
+  quickHint: { color: colors.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 5 },
+  pressed: { opacity: pressedOpacity },
 });

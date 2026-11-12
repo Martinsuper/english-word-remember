@@ -21,6 +21,7 @@ ios/build/
 
 # Tools & editors
 .codegraph/
+.zcode/
 tmp/
 work/
 outputs/

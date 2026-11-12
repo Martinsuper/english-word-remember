@@ -34,10 +34,26 @@ npm run install:mobile
 - 标准化 SM-2 间隔重复
 - 本地存储
 - 导入 / 导出本地数据
+- EPUB 书籍导入、阅读与生词收集
+- 内置 770,611 条离线英汉词典及词形还原
+- 可配置的 AI 句子解析与主动回忆练习
+- 统一暗色界面与闪卡翻转、滑动交互
 
-## 下一步
+## iOS Release
 
-1. 接入真题词库
-2. 加上 TTS 发音
-3. 加入搜索和筛选
-4. 做云同步和多端登录
+GitHub Release 提供 **未签名的真机 IPA**，不是 App Store 或 TestFlight 分发包。
+不能直接点按安装，需使用 SideStore、AltStore 等工具配合自己的 Apple 账号重新签名；
+可安装设备、有效期和权限取决于重新签名时使用的证书及描述文件。
+
+本地构建需要 macOS、Xcode 和已安装的 CocoaPods 依赖：
+
+```bash
+npm ci
+cd ios && pod install && cd ..
+npm run check
+npm run build:ios:release
+```
+
+产物和 SHA-256 校验文件位于 `outputs/ios-release/`。
+构建使用 Release 配置并内嵌 JavaScript 和离线词典，不依赖 Metro 开发服务器，
+且不会将开发者签名或设备描述文件打进发布包。

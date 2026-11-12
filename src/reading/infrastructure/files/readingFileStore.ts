@@ -81,6 +81,12 @@ export const readingFileStore = {
     await deleteAsync(bookDir, { idempotent: true });
   },
 
+  /** 删除全部书籍目录并重建空目录（用于"重置全部"）。 */
+  async deleteAllBookFiles(): Promise<void> {
+    await deleteAsync(BOOKS_DIR, { idempotent: true });
+    await makeDirectoryAsync(BOOKS_DIR, { intermediates: true });
+  },
+
   async deleteTempSession(sessionId: string): Promise<void> {
     const tempDir = this.getTempSessionDir(sessionId);
     await deleteAsync(tempDir, { idempotent: true });

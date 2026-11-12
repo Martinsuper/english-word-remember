@@ -10,11 +10,15 @@ import {
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { bookRepository } from '../../infrastructure/database/repositories/bookRepository';
 import { progressRepository } from '../../infrastructure/database/repositories/progressRepository';
-import { readingFileStore } from '../../infrastructure/files/readingFileStore';
+import { deleteReadingBook } from '../../application/deleteBook';
+import { PrimaryButton } from '../../../components/PrimaryButton';
+import { formatFileSize } from '../utils/format';
+import { colors, pressedOpacity, radius, spacing } from '../../../theme';
 import type { ReadingBook, ReadingChapter } from '../../domain/models';
 import type { ReadingStackParamList } from '../../../navigation/types';
 
@@ -55,8 +59,9 @@ export function BookDetailScreen() {
 
   const startReading = async () => {
     if (!book) return;
+    const progress = await progressRepository.getProgress(bookId);
     await bookRepository.updateLastOpened(bookId);
-    navigation.navigate('Reader', { bookId });
+    navigation.navigate('Reader', { bookId, locator: progress?.locator });
   };
 
   const handleDelete = () => {
@@ -72,14 +77,10 @@ export function BookDetailScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await bookRepository.updateBookStatus(bookId, 'deleting');
-              await progressRepository.deleteProgress(bookId);
-              await readingFileStore.deleteBookFiles(bookId);
-              await bookRepository.deleteBook(bookId);
+              await deleteReadingBook(bookId);
               navigation.goBack();
             } catch (error) {
               console.error('Failed to delete book:', error);
-              await bookRepository.updateBookStatus(bookId, 'ready');
               Alert.alert('删除失败', '请稍后重试');
             }
           },
@@ -92,7 +93,7 @@ export function BookDetailScreen() {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#a3e635" />
+          <ActivityIndicator size="large" color={colors.accent} />
         </View>
       </SafeAreaView>
     );
@@ -103,9 +104,7 @@ export function BookDetailScreen() {
       <SafeAreaView style={styles.container} edges={['top']}>
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>书籍不存在</Text>
-          <Pressable onPress={() => navigation.goBack()}>
-            <Text style={styles.backLink}>返回书库</Text>
-          </Pressable>
+          <PrimaryButton label="返回书库" onPress={() => navigation.goBack()} variant="soft" />
         </View>
       </SafeAreaView>
     );
@@ -116,10 +115,22 @@ export function BookDetailScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
-          <Text style={styles.backText}>← 返回</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="返回书架"
+          onPress={() => navigation.goBack()}
+          style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
+        >
+          <Ionicons name="chevron-back" size={22} color={colors.accent} />
+          <Text style={styles.backText}>书架</Text>
         </Pressable>
-        <Pressable onPress={handleDelete} style={styles.deleteButton}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="删除这本书"
+          onPress={handleDelete}
+          style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]}
+        >
+          <Ionicons name="trash-outline" size={17} color={colors.danger} />
           <Text style={styles.deleteText}>删除</Text>
         </Pressable>
       </View>
@@ -129,7 +140,7 @@ export function BookDetailScreen() {
           <Image source={{ uri: book.coverPath }} style={styles.cover} />
         ) : (
           <View style={[styles.cover, styles.coverPlaceholder]}>
-            <Text style={styles.coverText}>📖</Text>
+            <Ionicons name="image-outline" size={36} color={colors.textTertiary} />
           </View>
         )}
         <View style={styles.bookMeta}>
@@ -143,14 +154,11 @@ export function BookDetailScreen() {
         </View>
       </View>
 
-      <Pressable
+      <PrimaryButton
+        label={hasProgress ? '继续阅读' : '开始阅读'}
         onPress={startReading}
-        style={({ pressed }) => [styles.readButton, pressed && styles.readButtonPressed]}
-      >
-        <Text style={styles.readButtonText}>
-          {hasProgress ? '继续阅读' : '开始阅读'}
-        </Text>
-      </Pressable>
+        style={styles.readButton}
+      />
 
       <View style={styles.tocHeader}>
         <Text style={styles.tocTitle}>目录</Text>
@@ -161,7 +169,7 @@ export function BookDetailScreen() {
         data={linearChapters}
         renderItem={({ item, index }) => (
           <Pressable
-            style={({ pressed }) => [styles.chapterItem, pressed && styles.chapterItemPressed]}
+            style={({ pressed }) => [styles.chapterItem, pressed && styles.pressed]}
             onPress={() => navigation.navigate('Reader', {
               bookId,
               locator: { chapterId: item.id, progression: 0 },
@@ -169,6 +177,7 @@ export function BookDetailScreen() {
           >
             <Text style={styles.chapterNumber}>{index + 1}</Text>
             <Text style={styles.chapterTitle} numberOfLines={2}>{item.title}</Text>
+            <Ionicons name="chevron-forward" size={15} color={colors.textTertiary} />
           </Pressable>
         )}
         keyExtractor={(item) => item.id}
@@ -179,81 +188,67 @@ export function BookDetailScreen() {
   );
 }
 
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0b100e' },
+  container: { flex: 1, backgroundColor: colors.bg },
   loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   errorContainer: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  errorText: { color: '#f7f8f3', fontSize: 16, marginBottom: 12 },
-  backLink: { color: '#a3e635', fontSize: 16, fontWeight: '700' },
+  errorText: { color: colors.textPrimary, fontSize: 16, marginBottom: 12 },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 8,
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
   },
-  backButton: { paddingVertical: 4, paddingHorizontal: 4 },
-  backText: { color: '#a3e635', fontSize: 16, fontWeight: '700' },
-  deleteButton: { paddingVertical: 4, paddingHorizontal: 4 },
-  deleteText: { color: '#ef4444', fontSize: 14, fontWeight: '600' },
+  backButton: { flexDirection: 'row', alignItems: 'center', gap: 1, marginLeft: -spacing.xs },
+  backText: { color: colors.accent, fontSize: 16, fontWeight: '600' },
+  deleteButton: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 7, borderRadius: radius.full, backgroundColor: colors.dangerMuted },
+  deleteText: { color: colors.dangerSoft, fontSize: 13, fontWeight: '600' },
   bookHeader: {
     flexDirection: 'row',
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 16,
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.lg,
   },
-  cover: { width: 100, height: 136, borderRadius: 8, marginRight: 16 },
+  cover: { width: 100, height: 136, borderRadius: radius.md, marginRight: spacing.lg },
   coverPlaceholder: {
-    backgroundColor: '#263129',
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  coverText: { fontSize: 40 },
   bookMeta: { flex: 1, justifyContent: 'center' },
-  bookTitle: { color: '#f7f8f3', fontSize: 20, fontWeight: '800', marginBottom: 6 },
-  bookAuthor: { color: '#a3e635', fontSize: 14, marginBottom: 6 },
-  bookDetail: { color: '#829087', fontSize: 12 },
-  readButton: {
-    marginHorizontal: 20,
-    marginBottom: 16,
-    paddingVertical: 14,
-    borderRadius: 12,
-    backgroundColor: '#a3e635',
-    alignItems: 'center',
-  },
-  readButtonPressed: { opacity: 0.8 },
-  readButtonText: { color: '#0b100e', fontSize: 16, fontWeight: '800' },
+  bookTitle: { color: colors.textPrimary, fontSize: 20, fontWeight: '700', letterSpacing: -0.3, marginBottom: 6 },
+  bookAuthor: { color: colors.accent, fontSize: 14, marginBottom: 6 },
+  bookDetail: { color: colors.textSecondary, fontSize: 12 },
+  readButton: { marginHorizontal: spacing.xl, marginBottom: spacing.lg },
   tocHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingBottom: 8,
+    paddingHorizontal: spacing.xl,
+    paddingBottom: spacing.sm,
   },
-  tocTitle: { color: '#f7f8f3', fontSize: 16, fontWeight: '700' },
-  tocCount: { color: '#829087', fontSize: 13 },
-  tocList: { paddingHorizontal: 20, paddingBottom: 20 },
+  tocTitle: { color: colors.textPrimary, fontSize: 16, fontWeight: '700' },
+  tocCount: { color: colors.textSecondary, fontSize: 13 },
+  tocList: { paddingHorizontal: spacing.xl, paddingBottom: spacing.xl },
   chapterItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1c2420',
+    gap: spacing.sm,
+    paddingVertical: spacing.md - 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.borderSoft,
   },
-  chapterItemPressed: { opacity: 0.7 },
   chapterNumber: {
-    color: '#566b17',
+    color: colors.textTertiary,
     fontSize: 12,
-    fontWeight: '800',
-    width: 32,
+    fontWeight: '600',
+    width: 24,
     textAlign: 'center',
   },
-  chapterTitle: { flex: 1, color: '#f7f8f3', fontSize: 14, fontWeight: '600', marginLeft: 8 },
+  chapterTitle: { flex: 1, color: colors.textPrimary, fontSize: 14, fontWeight: '500' },
+  pressed: { opacity: pressedOpacity },
 });
