@@ -1,5 +1,6 @@
 import { createInitialDeck } from './review';
 import { DeckEntry, Word } from '../types';
+import { examplesFromCandidate } from './wordExamples';
 
 const ENGLISH_TERM_RE = /^[A-Za-z][A-Za-z0-9'’().\/\-\s]*$/;
 const HAS_LETTER_RE = /[A-Za-z]/;
@@ -36,10 +37,9 @@ export function sanitizeWordCandidate(candidate: unknown): Word | null {
   }
 
   const meaning = normalizeText(source.meaning ?? source.definition ?? source.translation);
-  const example = normalizeText(source.example ?? source.sentence);
-  const exampleMeaning = normalizeText(
-    source.exampleMeaning ?? source.example_translation ?? source.exampleTranslation,
-  );
+  const examples = examplesFromCandidate(source);
+  const example = examples[0]?.sentence ?? '';
+  const exampleMeaning = examples[0]?.translation ?? '';
 
   if (!looksLikeUsefulMeaning(meaning) || !looksLikeUsefulMeaning(exampleMeaning)) {
     return null;
@@ -52,6 +52,10 @@ export function sanitizeWordCandidate(candidate: unknown): Word | null {
     meaning,
     example,
     exampleMeaning,
+    examples,
+    tags: Array.isArray(source.tags)
+      ? source.tags.filter((tag): tag is string => typeof tag === 'string').map(normalizeText).filter(Boolean)
+      : undefined,
     sourceBook: normalizeText(source.sourceBook ?? source.book),
     sourcePage:
       typeof source.sourcePage === 'number' && Number.isFinite(source.sourcePage)

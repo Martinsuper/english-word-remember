@@ -1,4 +1,5 @@
 import { DeckEntry, Word } from '../types';
+import { getWordExamples } from './wordExamples';
 
 function normalize(value: string) {
   return value
@@ -21,8 +22,12 @@ export function filterWords<T extends Word | DeckEntry>(items: T[], query: strin
     return items;
   }
   return items.filter((item) => {
-    const fields = [item.term, item.meaning, item.example, item.exampleMeaning, item.phonetic];
+    const exampleFields = getWordExamples(item).flatMap((example) => [
+      example.sense,
+      example.sentence,
+      example.translation,
+    ]);
+    const fields = [item.term, item.meaning, item.phonetic, ...exampleFields];
     return fields.some((field) => matchesQuery(field, q));
   });
 }
-

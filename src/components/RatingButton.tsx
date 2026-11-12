@@ -1,6 +1,13 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { colors, pressedOpacity, radius } from '../theme';
 
 type Tone = 'danger' | 'warning' | 'success';
+
+const TONE_COLORS: Record<Tone, string> = {
+  danger: colors.danger,
+  warning: colors.warning,
+  success: colors.accent,
+};
 
 export function RatingButton({
   label,
@@ -19,14 +26,7 @@ export function RatingButton({
       onPress={onPress}
       style={({ pressed }) => [styles.button, pressed && styles.pressed]}
     >
-      <View
-        style={[
-          styles.marker,
-          tone === 'danger' && styles.danger,
-          tone === 'warning' && styles.warning,
-          tone === 'success' && styles.success,
-        ]}
-      />
+      <View style={[styles.marker, { backgroundColor: TONE_COLORS[tone] }]} />
       <Text style={styles.label}>{label}</Text>
       {helper ? <Text style={styles.helper}>{helper}</Text> : null}
     </Pressable>
@@ -36,19 +36,18 @@ export function RatingButton({
 const styles = StyleSheet.create({
   button: {
     flex: 1,
-    minHeight: 76,
-    backgroundColor: '#151c18',
+    minHeight: 72,
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: '#2b362e',
-    borderRadius: 18,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
     padding: 12,
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
   },
-  marker: { width: 22, height: 3, borderRadius: 999, marginBottom: 9 },
-  danger: { backgroundColor: '#fb7185' },
-  warning: { backgroundColor: '#facc15' },
-  success: { backgroundColor: '#a3e635' },
-  label: { color: '#eef2ee', fontSize: 13, fontWeight: '900' },
-  helper: { color: '#768279', fontSize: 9, fontWeight: '700', marginTop: 3 },
-  pressed: { opacity: 0.7 },
+  marker: { width: 20, height: 3, borderRadius: 999, marginBottom: 6 },
+  label: { color: colors.textPrimary, fontSize: 14, fontWeight: '600' },
+  helper: { color: colors.textTertiary, fontSize: 10, fontWeight: '500', marginTop: 2 },
+  pressed: { opacity: pressedOpacity },
 });

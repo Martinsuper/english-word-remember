@@ -1,12 +1,30 @@
-import { useEffect, useMemo, useState } from 'react';
-import { PanResponder, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Animated,
+  Easing,
+  PanResponder,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { RatingButton } from '../components/RatingButton';
 import { AutoScalingText } from '../components/AutoScalingText';
+import { ProgressBar } from '../components/ProgressBar';
+import { PrimaryButton } from '../components/PrimaryButton';
 import { AppStateApi } from '../hooks/useAppState';
 import { ReviewRating } from '../types';
+import { getWordExamples } from '../domain/wordExamples';
+import { colors, pressedOpacity, radius, spacing, typography } from '../theme';
 
 type Result = { wordId: string; rating: ReviewRating };
+
+// 卡面配色（亮面卡在暗底上，保留纸感）。
+const CARD_FRONT_BG = '#F5F7EE';
+const CARD_BACK_BG = '#EEF7D5';
 
 export function StudyScreen({ app, onExit }: { app: AppStateApi; onExit: () => void }) {
   const [batchIds, setBatchIds] = useState<string[]>(() => app.taskQueue.slice(0, app.currentPlan.batchSize).map((word) => word.id));
@@ -14,6 +32,7 @@ export function StudyScreen({ app, onExit }: { app: AppStateApi; onExit: () => v
   const [flipped, setFlipped] = useState(false);
   const [results, setResults] = useState<Result[]>([]);
   const [showBatchSummary, setShowBatchSummary] = useState(false);
+  const [exampleIndex, setExampleIndex] = useState(0);
   const wordId = batchIds[currentIndex];
   const word = wordId ? app.getWordById(wordId) : undefined;
   const taskType = wordId ? app.getTaskWordType(wordId) : undefined;
@@ -23,11 +42,53 @@ export function StudyScreen({ app, onExit }: { app: AppStateApi; onExit: () => v
   const dailyPosition = Math.min(app.taskSummary.total, app.taskSummary.completed + 1);
   const isRated = results.some((result) => result.wordId === wordId);
   const chineseFront = app.state.settings.cardFrontLanguage === 'chinese';
+  const examples = word ? getWordExamples(word) : [];
+  const currentExample = examples[Math.min(exampleIndex, Math.max(0, examples.length - 1))];
+
+  // 翻转动画：rotateY 0↔180，正反两面常驻、backfaceVisibility 隐藏。
+  const flipAnim = useRef(new Animated.Value(0)).current;
+  // 滑卡跟手位移。
+  const swipeX = useRef(new Animated.Value(0)).current;
+
+  const frontRotate = flipAnim.interpolate({
+    inputRange: [0, 180],
+    outputRange: ['0deg', '180deg'],
+  });
+  const backRotate = flipAnim.interpolate({
+    inputRange: [0, 180],
+    outputRange: ['180deg', '360deg'],
+  });
+  const cardRotate = swipeX.interpolate({
+    inputRange: [-320, 0, 320],
+    outputRange: ['-6deg', '0deg', '6deg'],
+  });
+
+  const resetFlip = (animated: boolean) => {
+    setFlipped(false);
+    flipAnim.stopAnimation();
+    if (animated) {
+      Animated.timing(flipAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start();
+    } else {
+      flipAnim.setValue(0);
+    }
+  };
+
+  const toggleFlip = () => {
+    const next = !flipped;
+    setFlipped(next);
+    Animated.timing(flipAnim, {
+      toValue: next ? 180 : 0,
+      duration: 260,
+      easing: Easing.inOut(Easing.ease),
+      useNativeDriver: true,
+    }).start();
+  };
 
   const showWordAt = (index: number) => {
     if (index < 0 || index >= batchIds.length || index === currentIndex) return;
     setCurrentIndex(index);
-    setFlipped(false);
+    resetFlip(false);
+    setExampleIndex(0);
   };
 
   const panResponder = useMemo(
@@ -39,12 +100,37 @@ export function StudyScreen({ app, onExit }: { app: AppStateApi; onExit: () => v
         onMoveShouldSetPanResponderCapture: (_, gesture) =>
           Math.abs(gesture.dx) > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
         onPanResponderTerminationRequest: () => false,
+        onPanResponderMove: (_, gesture) => {
+          swipeX.setValue(gesture.dx);
+        },
         onPanResponderRelease: (_, gesture) => {
-          if (Math.abs(gesture.dx) < 48) return;
-          showWordAt(gesture.dx < 0 ? currentIndex + 1 : currentIndex - 1);
+          if (Math.abs(gesture.dx) >= 48) {
+            const target = gesture.dx < 0 ? currentIndex + 1 : currentIndex - 1;
+            // 滑出屏幕后瞬间摆到对侧，再弹回，形成连续滑卡感。
+            Animated.timing(swipeX, {
+              toValue: gesture.dx * 2.2,
+              duration: 160,
+              useNativeDriver: true,
+            }).start(({ finished }) => {
+              if (!finished) return;
+              swipeX.setValue(gesture.dx < 0 ? 72 : -72);
+              showWordAt(target);
+              Animated.spring(swipeX, {
+                toValue: 0,
+                useNativeDriver: true,
+                speed: 24,
+                bounciness: 6,
+              }).start();
+            });
+          } else {
+            Animated.spring(swipeX, { toValue: 0, useNativeDriver: true, speed: 28, bounciness: 5 }).start();
+          }
+        },
+        onPanResponderTerminate: () => {
+          Animated.spring(swipeX, { toValue: 0, useNativeDriver: true }).start();
         },
       }),
-    [batchIds.length, currentIndex],
+    [batchIds.length, currentIndex, swipeX, flipAnim],
   );
 
   useEffect(() => {
@@ -53,6 +139,10 @@ export function StudyScreen({ app, onExit }: { app: AppStateApi; onExit: () => v
       setCurrentIndex(0);
     }
   }, [app.currentPlan.batchSize, app.taskQueue, batchIds.length, showBatchSummary]);
+
+  useEffect(() => {
+    setExampleIndex(0);
+  }, [wordId]);
 
   const batchStats = useMemo(() => {
     const known = results.filter((result) => result.rating === 'good').length;
@@ -74,7 +164,7 @@ export function StudyScreen({ app, onExit }: { app: AppStateApi; onExit: () => v
     const nextIndex = batchIds.findIndex((id, index) => index > currentIndex && !ratedIds.has(id));
     const fallbackIndex = batchIds.findIndex((id) => !ratedIds.has(id));
     setCurrentIndex(nextIndex >= 0 ? nextIndex : fallbackIndex);
-    setFlipped(false);
+    resetFlip(false);
   };
 
   const continueNextBatch = () => {
@@ -86,16 +176,24 @@ export function StudyScreen({ app, onExit }: { app: AppStateApi; onExit: () => v
     setBatchIds(next);
     setCurrentIndex(0);
     setResults([]);
-    setFlipped(false);
+    resetFlip(false);
     setShowBatchSummary(false);
   };
+
+  const overallProgress = isAdvancedBatch
+    ? advancedTotal
+      ? advancedPosition / advancedTotal
+      : 0
+    : app.taskSummary.total
+      ? dailyPosition / app.taskSummary.total
+      : 1;
 
   if (showBatchSummary) {
     const remainingAfterBatch = Math.max(0, app.taskQueue.length - batchIds.filter((id) => app.taskQueue.some((entry) => entry.id === id)).length);
     const dayComplete = remainingAfterBatch === 0;
     return (
       <SafeAreaView style={styles.safeArea}>
-        <ScrollView contentContainerStyle={styles.summaryWrap}>
+        <ScrollView contentContainerStyle={styles.summaryWrap} showsVerticalScrollIndicator={false}>
           <Text style={styles.kicker}>{dayComplete ? 'TODAY COMPLETE' : 'BATCH COMPLETE'}</Text>
           <Text style={styles.summaryTitle}>{dayComplete ? '今天的计划完成了。' : '这一批完成了。'}</Text>
           <Text style={styles.summarySubtitle}>
@@ -105,7 +203,9 @@ export function StudyScreen({ app, onExit }: { app: AppStateApi; onExit: () => v
           </Text>
           <View style={styles.summaryCard}>
             <SummaryStat label="本批正确率" value={`${batchStats.accuracy}%`} />
+            <View style={styles.summaryDivider} />
             <SummaryStat label="模糊" value={batchStats.fuzzy.toString()} />
+            <View style={styles.summaryDivider} />
             <SummaryStat label="不认识" value={batchStats.again.toString()} />
           </View>
           {dayComplete ? (
@@ -115,16 +215,22 @@ export function StudyScreen({ app, onExit }: { app: AppStateApi; onExit: () => v
               <Text style={styles.detailLine}>明日计划新词 {app.currentPlan.dailyNewWordTarget}，复习量将按本次结果动态生成</Text>
             </View>
           ) : null}
-          {!dayComplete ? (
-            <Pressable accessibilityRole="button" accessibilityLabel={`继续下一批，剩余 ${remainingAfterBatch} 个`} onPress={continueNextBatch} style={styles.primaryButton}>
-              <Text style={styles.primaryButtonText}>继续下一批</Text>
-            </Pressable>
+          {dayComplete ? (
+            <PrimaryButton
+              label={`提前学习明日新词（${app.currentPlan.dailyNewWordTarget}）`}
+              onPress={() => { app.startAdvancedLearning(); setShowBatchSummary(false); setBatchIds([]); setCurrentIndex(0); setResults([]); resetFlip(false); }}
+              style={styles.summaryPrimarySpacing}
+            />
           ) : (
-            <Pressable accessibilityRole="button" onPress={() => { app.startAdvancedLearning(); setShowBatchSummary(false); setBatchIds([]); setCurrentIndex(0); setResults([]); setFlipped(false); }} style={styles.primaryButton}>
-              <Text style={styles.primaryButtonText}>提前学习明日新词（{app.currentPlan.dailyNewWordTarget}）</Text>
-            </Pressable>
+            <PrimaryButton
+              label={`继续下一批，剩余 ${remainingAfterBatch} 个`}
+              onPress={continueNextBatch}
+              style={styles.summaryPrimarySpacing}
+            />
           )}
-          <Pressable onPress={onExit} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>{dayComplete ? '完成今日，返回首页' : '稍后继续'}</Text></Pressable>
+          <Pressable onPress={onExit} style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}>
+            <Text style={styles.secondaryButtonText}>{dayComplete ? '完成今日，返回首页' : '稍后继续'}</Text>
+          </Pressable>
         </ScrollView>
       </SafeAreaView>
     );
@@ -136,76 +242,86 @@ export function StudyScreen({ app, onExit }: { app: AppStateApi; onExit: () => v
         <View style={styles.emptyWrap}>
           <Text style={styles.kicker}>ALL CLEAR</Text>
           <Text style={styles.summaryTitle}>今天没有待学习单词。</Text>
-          <Pressable onPress={onExit} style={styles.primaryButton}><Text style={styles.primaryButtonText}>返回首页</Text></Pressable>
+          <PrimaryButton label="返回首页" onPress={onExit} />
         </View>
       </SafeAreaView>
     );
   }
 
+  const frontIsMeaning = chineseFront;
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
         <View style={styles.topBar}>
-          <Pressable accessibilityRole="button" onPress={onExit} style={styles.exitButton}><Text style={styles.exitText}>结束</Text></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="结束学习" onPress={onExit} style={({ pressed }) => [styles.exitButton, pressed && styles.pressed]}>
+            <Ionicons name="close" size={20} color={colors.textSecondary} />
+          </Pressable>
           <View style={styles.counters}>
             <Text style={styles.dailyCounter}>{isAdvancedBatch ? `提前任务 ${advancedPosition} / ${advancedTotal}` : `今日 ${dailyPosition} / ${app.taskSummary.total}`}</Text>
             <Text style={styles.batchCounter}>本批 {currentIndex + 1} / {batchIds.length}</Text>
           </View>
           <View style={styles.typePill}><Text style={styles.typeText}>{taskType === 'review' ? '复习' : taskType === 'catch_up' ? '补学' : taskType === 'advanced' ? '提前' : '新词'}</Text></View>
         </View>
-        <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${isAdvancedBatch ? (advancedTotal ? Math.min(100, (advancedPosition / advancedTotal) * 100) : 0) : app.taskSummary.total ? Math.min(100, (dailyPosition / app.taskSummary.total) * 100) : 100}%` }]} /></View>
+        <ProgressBar progress={overallProgress} />
         <View style={styles.studyOptions}>
           <Text style={styles.gestureHint}>右滑上一个 · 左滑下一个</Text>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`切换闪卡正面语言，当前为${chineseFront ? '中文' : '英文'}`}
             onPress={() => app.updateSettings({ cardFrontLanguage: chineseFront ? 'english' : 'chinese' })}
-            style={styles.frontLanguageButton}
+            style={({ pressed }) => [styles.frontLanguageButton, pressed && styles.pressed]}
           >
-            <Text style={styles.frontLanguageText}>正面：{chineseFront ? '中文' : '英文'} ⇄</Text>
+            <Ionicons name="swap-horizontal" size={13} color={colors.accent} />
+            <Text style={styles.frontLanguageText}>正面：{chineseFront ? '中文' : '英文'}</Text>
           </Pressable>
         </View>
 
-        <View {...panResponder.panHandlers} style={styles.cardGestureLayer}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`${chineseFront ? word.meaning : word.term}，${flipped ? '已显示背面' : '点击显示背面'}，左右滑动切换单词`}
-            onPress={() => setFlipped((value) => !value)}
-            style={[styles.card, flipped && styles.cardBack]}
+        <View style={styles.cardGestureLayer}>
+          <Animated.View
+            {...panResponder.panHandlers}
+            style={[styles.cardGestureInner, { transform: [{ translateX: swipeX }, { rotate: cardRotate }] }]}
           >
-            <Text style={styles.sideLabel}>{flipped ? (chineseFront ? 'WORD' : 'MEANING') : (chineseFront ? '中文' : 'WORD')}</Text>
-            {!flipped ? (
-              <View style={styles.wordBlock}>
-                <AutoScalingText adjustsFontSizeToFit minimumFontScale={0.4} numberOfLines={1} style={chineseFront ? styles.frontMeaning : styles.word}>{chineseFront ? word.meaning || '暂无中文释义' : word.term}</AutoScalingText>
-                {!chineseFront && app.state.settings.showPhonetic && word.phonetic ? <Text style={styles.phonetic}>{word.phonetic}</Text> : null}
-              </View>
-            ) : chineseFront ? (
-              <View style={styles.meaningBlock}>
-                <AutoScalingText adjustsFontSizeToFit minimumFontScale={0.4} numberOfLines={1} style={styles.word}>{word.term}</AutoScalingText>
-                {app.state.settings.showPhonetic && word.phonetic ? <Text style={styles.phonetic}>{word.phonetic}</Text> : null}
-                {app.state.settings.showExample && word.example ? (
-                  <View style={styles.exampleBlock}>
-                    <Text style={styles.example}>{word.example}</Text>
-                    {app.state.settings.showExampleMeaning && word.exampleMeaning ? <Text style={styles.exampleMeaning}>{word.exampleMeaning}</Text> : null}
-                  </View>
-                ) : null}
-              </View>
-            ) : (
-              <View style={styles.meaningBlock}>
-                <AutoScalingText adjustsFontSizeToFit minimumFontScale={0.5} numberOfLines={1} style={styles.backWord}>{word.term}</AutoScalingText>
-                <Text style={styles.meaning}>{word.meaning}</Text>
-                {app.state.settings.showExample && word.example ? (
-                  <View style={styles.exampleBlock}>
-                    <Text style={styles.example}>{word.example}</Text>
-                    {app.state.settings.showExampleMeaning && word.exampleMeaning ? <Text style={styles.exampleMeaning}>{word.exampleMeaning}</Text> : null}
-                  </View>
-                ) : null}
-              </View>
-            )}
-            <View style={styles.cardFooter}>
-              <Text style={styles.tapHint}>{flipped ? '根据记忆情况完成评价' : `点击查看${chineseFront ? '英文' : '中文'}`}</Text>
-            </View>
-          </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`${chineseFront ? word.meaning : word.term}，${flipped ? '已显示背面' : '点击显示背面'}，左右滑动切换单词`}
+              onPress={toggleFlip}
+              style={styles.card}
+            >
+              {/* 正面 */}
+              <Animated.View style={[styles.face, { backgroundColor: CARD_FRONT_BG, transform: [{ rotateY: frontRotate }] }]}>
+                <Text style={styles.sideLabel}>{frontIsMeaning ? '中文' : 'WORD'}</Text>
+                <View style={styles.wordBlock}>
+                  <AutoScalingText adjustsFontSizeToFit minimumFontScale={0.4} numberOfLines={1} style={frontIsMeaning ? styles.frontMeaning : styles.word}>
+                    {frontIsMeaning ? word.meaning || '暂无中文释义' : word.term}
+                  </AutoScalingText>
+                  {!frontIsMeaning && app.state.settings.showPhonetic && word.phonetic ? <Text style={styles.phonetic}>{word.phonetic}</Text> : null}
+                </View>
+                <View style={styles.cardFooter}>
+                  <Text style={styles.tapHint}>点击查看{frontIsMeaning ? '英文' : '中文'}</Text>
+                </View>
+              </Animated.View>
+              {/* 背面 */}
+              <Animated.View style={[styles.face, styles.faceBack, { backgroundColor: CARD_BACK_BG, transform: [{ rotateY: backRotate }] }]}>
+                <Text style={styles.sideLabel}>{chineseFront ? 'WORD' : 'MEANING'}</Text>
+                <View style={styles.meaningBlock}>
+                  <AutoScalingText adjustsFontSizeToFit minimumFontScale={0.5} numberOfLines={1} style={styles.backWord}>{word.term}</AutoScalingText>
+                  {app.state.settings.showPhonetic && word.phonetic ? <Text style={styles.phonetic}>{word.phonetic}</Text> : null}
+                  <Text style={styles.meaning}>{word.meaning}</Text>
+                  {app.state.settings.showExample && currentExample ? (
+                    <View style={styles.exampleBlock}>
+                      {currentExample.sense ? <Text style={styles.exampleSense}>{currentExample.sense}</Text> : null}
+                      <Text style={styles.example}>{currentExample.sentence}</Text>
+                      {app.state.settings.showExampleMeaning && currentExample.translation ? <Text style={styles.exampleMeaning}>{currentExample.translation}</Text> : null}
+                    </View>
+                  ) : null}
+                </View>
+                <View style={styles.cardFooter}>
+                  <Text style={styles.tapHint}>根据记忆情况完成评价</Text>
+                </View>
+              </Animated.View>
+            </Pressable>
+          </Animated.View>
         </View>
 
         <View style={styles.wordNavigation}>
@@ -216,7 +332,8 @@ export function StudyScreen({ app, onExit }: { app: AppStateApi; onExit: () => v
             onPress={() => showWordAt(currentIndex - 1)}
             style={[styles.wordNavigationButton, currentIndex === 0 && styles.wordNavigationButtonDisabled]}
           >
-            <Text style={styles.wordNavigationText}>‹ 上一个</Text>
+            <Ionicons name="chevron-back" size={15} color={colors.textPrimary} />
+            <Text style={styles.wordNavigationText}>上一个</Text>
           </Pressable>
           <Text style={styles.wordNavigationPosition}>{currentIndex + 1} / {batchIds.length}</Text>
           <Pressable
@@ -226,9 +343,21 @@ export function StudyScreen({ app, onExit }: { app: AppStateApi; onExit: () => v
             onPress={() => showWordAt(currentIndex + 1)}
             style={[styles.wordNavigationButton, currentIndex === batchIds.length - 1 && styles.wordNavigationButtonDisabled]}
           >
-            <Text style={styles.wordNavigationText}>下一个 ›</Text>
+            <Text style={styles.wordNavigationText}>下一个</Text>
+            <Ionicons name="chevron-forward" size={15} color={colors.textPrimary} />
           </Pressable>
         </View>
+
+        {flipped && app.state.settings.showExample && examples.length > 1 ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`切换例句，当前第 ${exampleIndex + 1} 条，共 ${examples.length} 条`}
+            onPress={() => setExampleIndex((value) => (value + 1) % examples.length)}
+            style={({ pressed }) => [styles.exampleSwitcher, pressed && styles.pressed]}
+          >
+            <Text style={styles.exampleSwitcherText}>换条例句 · {exampleIndex + 1} / {examples.length}</Text>
+          </Pressable>
+        ) : null}
 
         <View style={styles.ratingArea}>
           <Text style={styles.ratingHint}>{isRated ? '这个词已完成评价，可左右滑动查看其他词' : flipped ? '这次记得怎么样？' : '先回忆，再点击卡片查看背面'}</Text>
@@ -244,14 +373,103 @@ export function StudyScreen({ app, onExit }: { app: AppStateApi; onExit: () => v
 }
 
 function SummaryStat({ label, value }: { label: string; value: string }) {
-  return <View style={styles.summaryStat}><Text style={styles.summaryValue}>{value}</Text><Text style={styles.summaryLabel}>{label}</Text></View>;
+  return (
+    <View style={styles.summaryStat}>
+      <Text style={styles.summaryValue}>{value}</Text>
+      <Text style={styles.summaryLabel}>{label}</Text>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#0b100e' }, container: { flex: 1, padding: 18, gap: 12 },
-  topBar: { minHeight: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, exitButton: { width: 58, paddingVertical: 10, borderRadius: 15, backgroundColor: '#151c18', borderWidth: 1, borderColor: '#263129', alignItems: 'center' }, exitText: { color: '#c7d0c9', fontSize: 12, fontWeight: '800' }, counters: { alignItems: 'center', gap: 2 }, dailyCounter: { color: '#d8dfd9', fontSize: 13, fontWeight: '900' }, batchCounter: { color: '#758279', fontSize: 10, fontWeight: '700' }, typePill: { width: 58, borderRadius: 15, paddingVertical: 9, backgroundColor: '#263129', alignItems: 'center' }, typeText: { color: '#a3e635', fontSize: 11, fontWeight: '900' },
-  progressTrack: { height: 4, backgroundColor: '#263129', borderRadius: 99, overflow: 'hidden' }, progressFill: { height: '100%', backgroundColor: '#a3e635' }, studyOptions: { minHeight: 30, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, gestureHint: { color: '#657169', fontSize: 10, fontWeight: '700' }, frontLanguageButton: { borderRadius: 12, backgroundColor: '#1d2720', paddingHorizontal: 10, paddingVertical: 7 }, frontLanguageText: { color: '#a3e635', fontSize: 10, fontWeight: '900' },
-  cardGestureLayer: { flex: 1, minHeight: 350, maxHeight: 560, marginTop: 6 }, card: { flex: 1, backgroundColor: '#f5f7ee', borderRadius: 30, padding: 24, justifyContent: 'space-between' }, cardBack: { backgroundColor: '#eef7d5' }, sideLabel: { color: '#788077', fontSize: 10, letterSpacing: 2, fontWeight: '900' }, wordBlock: { alignItems: 'center', gap: 12 }, word: { color: '#10160f', fontSize: 46, lineHeight: 56, fontWeight: '900', textAlign: 'center' }, frontMeaning: { color: '#10160f', fontSize: 30, lineHeight: 43, fontWeight: '900', textAlign: 'center' }, phonetic: { color: '#697268', fontSize: 17, textAlign: 'center' }, meaningBlock: { gap: 15 }, backWord: { color: '#596b20', fontSize: 15, fontWeight: '900' }, meaning: { color: '#15200f', fontSize: 24, lineHeight: 34, fontWeight: '900' }, exampleBlock: { borderTopWidth: 1, borderTopColor: '#ced8ad', paddingTop: 14, gap: 7 }, example: { color: '#425039', fontSize: 14, lineHeight: 21 }, exampleMeaning: { color: '#6b7863', fontSize: 12, lineHeight: 19 }, cardFooter: { gap: 8 }, tapHint: { color: '#7a8378', fontSize: 12, fontWeight: '700', textAlign: 'center' }, wordNavigation: { minHeight: 38, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, wordNavigationButton: { minWidth: 86, minHeight: 36, borderRadius: 12, backgroundColor: '#1d2720', alignItems: 'center', justifyContent: 'center' }, wordNavigationButtonDisabled: { opacity: 0.3 }, wordNavigationText: { color: '#d7dfd8', fontSize: 11, fontWeight: '900' }, wordNavigationPosition: { color: '#748078', fontSize: 10, fontWeight: '800' },
-  ratingArea: { gap: 8 }, ratingHint: { color: '#87938a', fontSize: 11, textAlign: 'center' }, ratingRow: { flexDirection: 'row', gap: 8 }, ratingDisabled: { opacity: 0.34 },
-  summaryWrap: { flexGrow: 1, justifyContent: 'center', padding: 24, gap: 14 }, emptyWrap: { flex: 1, justifyContent: 'center', padding: 28, gap: 14 }, kicker: { color: '#a3e635', fontSize: 10, letterSpacing: 2, fontWeight: '900' }, summaryTitle: { color: '#f4f7f2', fontSize: 30, lineHeight: 38, fontWeight: '900' }, summarySubtitle: { color: '#8c998f', fontSize: 14, lineHeight: 21 }, summaryCard: { flexDirection: 'row', backgroundColor: '#151c18', borderRadius: 22, borderWidth: 1, borderColor: '#263129', paddingVertical: 18 }, summaryStat: { flex: 1, alignItems: 'center' }, summaryValue: { color: '#f4f7f2', fontSize: 22, fontWeight: '900' }, summaryLabel: { color: '#748078', fontSize: 10, marginTop: 4 }, detailCard: { backgroundColor: '#151c18', borderRadius: 20, padding: 16, gap: 7 }, detailTitle: { color: '#eef2ee', fontSize: 15, fontWeight: '900' }, detailLine: { color: '#849087', fontSize: 12, lineHeight: 18 }, primaryButton: { backgroundColor: '#eef7d5', borderRadius: 18, paddingVertical: 15, alignItems: 'center', marginTop: 5 }, primaryButtonText: { color: '#172009', fontSize: 14, fontWeight: '900' }, secondaryButton: { borderRadius: 18, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: '#2a352d' }, secondaryButtonText: { color: '#aeb8b0', fontSize: 13, fontWeight: '800' },
+  safeArea: { flex: 1, backgroundColor: colors.bg },
+  container: { flex: 1, padding: spacing.lg + 2, gap: spacing.md },
+
+  topBar: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  exitButton: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.full,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  counters: { alignItems: 'center', gap: 2 },
+  dailyCounter: { color: colors.textPrimary, fontSize: 13, fontWeight: '600' },
+  batchCounter: { color: colors.textTertiary, fontSize: 10, fontWeight: '500' },
+  typePill: { minWidth: 52, borderRadius: radius.full, paddingVertical: 8, paddingHorizontal: 10, backgroundColor: colors.accentMuted, alignItems: 'center' },
+  typeText: { color: colors.accent, fontSize: 11, fontWeight: '600' },
+
+  studyOptions: { minHeight: 30, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  gestureHint: { color: colors.textTertiary, fontSize: 10, fontWeight: '500' },
+  frontLanguageButton: { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: radius.md, backgroundColor: colors.surfaceAlt, paddingHorizontal: 10, paddingVertical: 7 },
+  frontLanguageText: { color: colors.accent, fontSize: 10, fontWeight: '600' },
+
+  cardGestureLayer: { flex: 1, minHeight: 340, maxHeight: 560, marginTop: spacing.xs },
+  cardGestureInner: { flex: 1 },
+  card: { flex: 1 },
+  face: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: radius.xxl,
+    padding: spacing.xxl,
+    justifyContent: 'space-between',
+    backfaceVisibility: 'hidden',
+  },
+  faceBack: { transform: [{ rotateY: '180deg' }] },
+  sideLabel: { color: '#7C857B', fontSize: 10, letterSpacing: 2, fontWeight: '600' },
+  wordBlock: { alignItems: 'center', gap: spacing.md },
+  word: { color: colors.accentInk, fontSize: 46, lineHeight: 54, fontWeight: '800', textAlign: 'center' },
+  frontMeaning: { color: colors.accentInk, fontSize: 30, lineHeight: 42, fontWeight: '700', textAlign: 'center' },
+  phonetic: { color: '#6B7568', fontSize: 16, textAlign: 'center' },
+  meaningBlock: { gap: spacing.lg - 1 },
+  backWord: { color: colors.accentDeep, fontSize: 15, fontWeight: '700' },
+  meaning: { color: colors.accentInk, fontSize: 23, lineHeight: 33, fontWeight: '700', letterSpacing: -0.2 },
+  exampleBlock: { borderTopWidth: 1, borderTopColor: '#CED8AD', paddingTop: 14, gap: 7 },
+  exampleSense: { alignSelf: 'flex-start', color: colors.accentDeep, backgroundColor: '#DCEBA9', borderRadius: radius.sm - 2, paddingHorizontal: 8, paddingVertical: 3, fontSize: 10, fontWeight: '600' },
+  example: { color: '#42503A', fontSize: 14, lineHeight: 21 },
+  exampleMeaning: { color: '#6B7863', fontSize: 12, lineHeight: 19 },
+  cardFooter: { gap: spacing.sm },
+  tapHint: { color: '#7A8378', fontSize: 12, fontWeight: '500', textAlign: 'center' },
+
+  wordNavigation: { minHeight: 38, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  wordNavigationButton: { flexDirection: 'row', alignItems: 'center', gap: 3, minWidth: 84, minHeight: 36, borderRadius: radius.md, backgroundColor: colors.surfaceAlt, paddingHorizontal: 12, justifyContent: 'center' },
+  wordNavigationButtonDisabled: { opacity: 0.3 },
+  wordNavigationText: { color: colors.textPrimary, fontSize: 11, fontWeight: '600' },
+  wordNavigationPosition: { color: colors.textTertiary, fontSize: 10, fontWeight: '600' },
+  exampleSwitcher: { alignSelf: 'center', borderRadius: radius.md, backgroundColor: colors.accentMuted, paddingHorizontal: 14, paddingVertical: 8 },
+  exampleSwitcherText: { color: colors.accent, fontSize: 10, fontWeight: '600' },
+
+  ratingArea: { gap: spacing.sm },
+  ratingHint: { color: colors.textSecondary, fontSize: 11, textAlign: 'center' },
+  ratingRow: { flexDirection: 'row', gap: spacing.sm },
+  ratingDisabled: { opacity: 0.34 },
+
+  summaryWrap: { flexGrow: 1, justifyContent: 'center', padding: spacing.xxl, gap: 14 },
+  emptyWrap: { flex: 1, justifyContent: 'center', padding: 28, gap: 14 },
+  kicker: { ...typography.eyebrow, color: colors.accent, fontSize: 10, letterSpacing: 2 },
+  summaryTitle: { color: colors.textPrimary, fontSize: 28, lineHeight: 36, fontWeight: '700', letterSpacing: -0.5 },
+  summarySubtitle: { color: colors.textSecondary, fontSize: 14, lineHeight: 21 },
+  summaryCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: spacing.lg + 2,
+  },
+  summaryStat: { flex: 1, alignItems: 'center', gap: 4 },
+  summaryDivider: { width: 1, height: 28, backgroundColor: colors.borderSoft },
+  summaryValue: { color: colors.textPrimary, fontSize: 22, fontWeight: '700', letterSpacing: -0.4 },
+  summaryLabel: { color: colors.textTertiary, fontSize: 11, fontWeight: '500' },
+  detailCard: { backgroundColor: colors.surface, borderRadius: radius.xl, padding: spacing.lg, gap: 7, borderWidth: 1, borderColor: colors.border },
+  detailTitle: { color: colors.textPrimary, fontSize: 15, fontWeight: '600' },
+  detailLine: { color: colors.textSecondary, fontSize: 12, lineHeight: 18 },
+  summaryPrimarySpacing: { marginTop: 5 },
+  secondaryButton: { borderRadius: radius.lg, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: colors.border },
+  secondaryButtonText: { color: colors.textSecondary, fontSize: 13, fontWeight: '600' },
+
+  pressed: { opacity: pressedOpacity },
 });

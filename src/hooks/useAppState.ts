@@ -1,11 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as Speech from 'expo-speech';
-import { AppSettings, AppState, ReviewLogEntry, defaultSettings } from '../appState';
+import { AppSettings, AppState, MAX_REVIEW_LOGS, ReviewLogEntry, defaultSettings } from '../appState';
 import { builtInPacks } from '../data/builtInPacks';
 import { applyReview, chooseActiveWordId, createInitialDeck, getStats, isDue } from '../domain/review';
+import { deckProgressFromDeck, mergeProgressIntoDeck } from '../domain/deckProgress';
 import { filterWords } from '../domain/text';
 import { clearAppState, createDefaultAppState, loadAppState, saveAppState } from '../storage/appStateStorage';
+import { generateId } from '../utils/generateId';
 import { sanitizeWordList } from '../domain/wordQuality';
+import { READING_PACK_ID } from '../reading/application/addReadingVocabulary';
+import { clearReadingData } from '../reading/infrastructure/database/database';
+import { readingFileStore } from '../reading/infrastructure/files/readingFileStore';
+import { resetAiReadingConfig } from '../reading/infrastructure/ai/aiReadingConfig';
 import { DeckEntry, ReviewRating, StudyPlan, Word } from '../types';
 import {
   addAdvancedWords,
@@ -25,39 +31,24 @@ import {
   scheduleDailyReminder,
 } from '../services/notificationService';
 
+// reviewLogs 目前无 UI 消费，仅作为学习记录持久化；设上限防止存储体积无界膨胀。
+// 上限常量 MAX_REVIEW_LOGS 定义在 src/appState.ts。
+
 function makeReviewLog(wordId: string, rating: ReviewRating): ReviewLogEntry {
   return {
-    id: `${wordId}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    id: `${wordId}-${generateId()}`,
     wordId,
     rating,
     reviewedAt: new Date().toISOString(),
   };
 }
 
-function hasLearningProgress(entry: DeckEntry) {
-  return (
-    entry.state.repetition > 0 ||
-    entry.state.correctCount > 0 ||
-    entry.state.wrongCount > 0 ||
-    Boolean(entry.state.lastReviewedAt)
-  );
-}
-
-function deckProgressFromDeck(deck: DeckEntry[]) {
-  return deck.filter(hasLearningProgress).map((entry) => ({ id: entry.id, state: entry.state }));
+function appendReviewLog(logs: ReviewLogEntry[], log: ReviewLogEntry): ReviewLogEntry[] {
+  return [log, ...logs].slice(0, MAX_REVIEW_LOGS);
 }
 
 function buildDeckFromWords(words: Word[], progress: ReturnType<typeof deckProgressFromDeck> = []) {
-  const baseDeck = createInitialDeck(words);
-  if (progress.length === 0) {
-    return baseDeck;
-  }
-
-  const progressById = new Map(progress.map((entry) => [entry.id, entry.state]));
-  return baseDeck.map((entry) => {
-    const state = progressById.get(entry.id);
-    return state ? { ...entry, state } : entry;
-  });
+  return mergeProgressIntoDeck(createInitialDeck(words), progress);
 }
 
 function makeImportedPackId(title: string) {
@@ -66,8 +57,17 @@ function makeImportedPackId(title: string) {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 32);
-  return `custom-${slug || 'words'}-${Date.now().toString(36)}`;
+  return `custom-${slug || 'words'}-${generateId()}`;
 }
+
+export type ReadingWordInput = {
+  term: string;
+  phonetic?: string;
+  meaning?: string;
+  tags?: string[];
+  sentence: string;
+  sourceBook: string;
+};
 
 export function useAppState() {
   const [state, setState] = useState<AppState>(() => createDefaultAppState());
@@ -100,7 +100,9 @@ export function useAppState() {
     }
 
     saveTimerRef.current = setTimeout(() => {
-      saveAppState(state).catch(() => undefined);
+      saveAppState(state).catch((error) => {
+        console.warn('[app-state] Failed to persist app state:', error);
+      });
     }, 400);
 
     return () => {
@@ -146,7 +148,9 @@ export function useAppState() {
       await scheduleDailyReminder(reminderHour, reminderMinute, reviewCount, newCount);
     };
 
-    syncReminder().catch(() => undefined);
+    syncReminder().catch((error) => {
+      console.warn('[reminders] Failed to sync reminder notifications:', error);
+    });
   }, [
     hydrated,
     state.settings.reminderEnabled,
@@ -276,7 +280,7 @@ export function useAppState() {
       return {
         ...current,
         deck: nextDeck,
-        reviewLogs: [makeReviewLog(wordId, rating), ...current.reviewLogs],
+        reviewLogs: appendReviewLog(current.reviewLogs, makeReviewLog(wordId, rating)),
       };
     });
   };
@@ -300,7 +304,7 @@ export function useAppState() {
       return {
         ...current,
         deck: nextDeck,
-        reviewLogs: [makeReviewLog(wordId, rating), ...current.reviewLogs],
+        reviewLogs: appendReviewLog(current.reviewLogs, makeReviewLog(wordId, rating)),
         dailyTasks: {
           ...current.dailyTasks,
           [packId]: { ...tasks, [dateKey]: nextTask },
@@ -373,12 +377,16 @@ export function useAppState() {
     }));
   };
 
-  const speakWord = (wordText: string) => {
-    Speech.stop();
+  const speakWord = async (wordText: string) => {
+    const text = wordText.trim();
+    if (!text) return;
+    await Speech.stop();
     Speech.speak(wordText, {
       language: 'en-US',
-      rate: 0.92,
+      rate: 0.86,
       pitch: 1,
+      useApplicationAudioSession: false,
+      onError: (error) => console.warn('Speech playback failed:', error),
     });
   };
 
@@ -387,6 +395,16 @@ export function useAppState() {
     setState(fresh);
     await clearAppState();
     await saveAppState(fresh);
+    // 同步清理阅读域数据（书、章节、进度、生词语境、书籍文件）与 AI 配置，失败不影响主流程。
+    await clearReadingData().catch((error) => {
+      console.warn('[reset] Failed to clear reading database:', error);
+    });
+    await readingFileStore.deleteAllBookFiles().catch((error) => {
+      console.warn('[reset] Failed to delete book files:', error);
+    });
+    await resetAiReadingConfig().catch((error) => {
+      console.warn('[reset] Failed to clear AI config:', error);
+    });
   };
 
   const switchPack = (packId: string) => {
@@ -477,6 +495,69 @@ export function useAppState() {
     return cleanWords.length;
   };
 
+  const upsertReadingWord = (input: ReadingWordInput) => {
+    const normalized = input.term.trim().toLowerCase();
+    const wordId = `reading-${normalized.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`;
+    setState((current) => {
+      const existingPack = current.customPacks.find((pack) => pack.id === READING_PACK_ID);
+      const existingWord = existingPack?.words.find(
+        (word) => word.term.trim().toLowerCase() === normalized,
+      );
+      const nextWord: Word = existingWord
+        ? {
+            ...existingWord,
+            phonetic: existingWord.phonetic || input.phonetic || '',
+            meaning: existingWord.meaning || input.meaning || '',
+            tags: [...new Set([...(existingWord.tags ?? []), ...(input.tags ?? [])])],
+            example: existingWord.example || input.sentence,
+            sourceBook: existingWord.sourceBook || input.sourceBook,
+            rawText: input.sentence,
+          }
+        : {
+            id: wordId,
+            term: input.term,
+            phonetic: input.phonetic || '',
+            meaning: input.meaning || '',
+            tags: input.tags,
+            example: input.sentence,
+            exampleMeaning: '',
+            sourceBook: input.sourceBook,
+            rawText: input.sentence,
+          };
+      const words = existingPack
+        ? existingPack.words.some((word) => word.id === nextWord.id)
+          ? existingPack.words.map((word) => (word.id === nextWord.id ? nextWord : word))
+          : [...existingPack.words, nextWord]
+        : [nextWord];
+      const customPacks = existingPack
+        ? current.customPacks.map((pack) =>
+            pack.id === READING_PACK_ID
+              ? { ...pack, words, description: `阅读中积累的生词，${words.length} 词` }
+              : pack,
+          )
+        : [
+            ...current.customPacks,
+            {
+              id: READING_PACK_ID,
+              title: '阅读生词',
+              description: `阅读中积累的生词，${words.length} 词`,
+              words,
+            },
+          ];
+      const plan = current.studyPlans[READING_PACK_ID] ?? createDefaultStudyPlan(READING_PACK_ID);
+      const nextState = {
+        ...current,
+        customPacks,
+        studyPlans: { ...current.studyPlans, [READING_PACK_ID]: plan },
+        packProgress: { ...current.packProgress, [READING_PACK_ID]: current.packProgress[READING_PACK_ID] ?? [] },
+      };
+      if (current.activePackId !== READING_PACK_ID) return nextState;
+      const progress = deckProgressFromDeck(current.deck);
+      return { ...nextState, deck: buildDeckFromWords(words, progress) };
+    });
+    return wordId;
+  };
+
   return {
     hydrated,
     state,
@@ -512,6 +593,7 @@ export function useAppState() {
     setSearchQuery,
     speakWord,
     importWordPack,
+    upsertReadingWord,
     switchPack,
     resetAll,
     isFavorite: (wordId: string) => favoriteIdSet.has(wordId),

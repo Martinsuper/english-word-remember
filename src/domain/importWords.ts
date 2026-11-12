@@ -57,7 +57,7 @@ function columnIndex(headers: string[], patterns: RegExp[], fallback: number) {
 
 function looksLikeHeader(parts: string[]) {
   return parts.some((part) =>
-    /^(单词|word|term|vocab|英音|美音|释义|meaning|definition|translation|例句|sentence|example)$/i.test(
+    /^(单词|word|term|vocab|英音|美音|释义|meaning|definition|translation|例句|sentence|example|例句json|examplesjson)$/i.test(
       normalizeHeader(part),
     ),
   );
@@ -97,7 +97,12 @@ function parseTableRows(lines: string[]): Word[] {
   const meaningIndex = hasHeader
     ? columnIndex(headers, [/释义/, /中文/, /meaning/, /definition/, /translation/], 3)
     : 2;
-  const exampleIndex = hasHeader ? columnIndex(headers, [/例句/, /example/, /sentence/], -1) : 3;
+  const examplesJsonIndex = hasHeader
+    ? columnIndex(headers, [/^例句json$/, /^examplesjson$/, /^examplejson$/, /^examples$/], -1)
+    : -1;
+  const exampleIndex = hasHeader
+    ? columnIndex(headers, [/^例句$/, /^example$/, /^sentence$/], -1)
+    : 3;
   const exampleMeaningIndex = hasHeader
     ? columnIndex(headers, [/例句翻译/, /例句释义/, /examplemeaning/, /exampletranslation/], -1)
     : 4;
@@ -110,6 +115,7 @@ function parseTableRows(lines: string[]): Word[] {
     const meaning = row[meaningIndex] ?? '';
     const example = exampleIndex >= 0 ? row[exampleIndex] ?? '' : '';
     const exampleMeaning = exampleMeaningIndex >= 0 ? row[exampleMeaningIndex] ?? '' : '';
+    const examplesJson = examplesJsonIndex >= 0 ? row[examplesJsonIndex] ?? '' : '';
 
     return {
       id: `excel-${String(index + 1).padStart(4, '0')}-${normalizeWordId(term)}`,
@@ -118,6 +124,7 @@ function parseTableRows(lines: string[]): Word[] {
       meaning,
       example,
       exampleMeaning,
+      examplesJson,
       sourceBook: 'Excel 链接词库',
       sourcePage: index + 1,
       rawText: uk && us && uk !== us ? `英音 ${uk} | 美音 ${us}` : '',

@@ -1,8 +1,12 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { addDays, isIntroduced } from '../domain/studyPlan';
 import { localDateKey } from '../domain/review';
 import { AppStateApi } from '../hooks/useAppState';
+import { StatCard } from '../components/StatCard';
+import { ProgressBar } from '../components/ProgressBar';
+import { colors, pressedOpacity, radius, spacing, typography } from '../theme';
 
 const weekdayLabels = ['日', '一', '二', '三', '四', '五', '六'];
 const strategies = [
@@ -43,23 +47,26 @@ export function PlanScreen({ app }: { app: AppStateApi }) {
           <Text style={styles.eyebrow}>CURRENT PLAN</Text>
           <Text style={styles.title}>{app.activePack?.title ?? '当前词库'}</Text>
           <Text style={styles.finishDate}>预计 {app.estimatedCompletionDate} 完成新词</Text>
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${app.deck.length ? (introduced / app.deck.length) * 100 : 0}%` }]} />
-          </View>
+          <ProgressBar
+            progress={app.deck.length ? introduced / app.deck.length : 0}
+            trackColor="#CED9AA"
+            fillColor={colors.accentDeep}
+            style={styles.heroProgress}
+          />
           <View style={styles.statsRow}>
-            <PlanStat label="已学" value={introduced} />
-            <PlanStat label="已掌握" value={mastered} />
-            <PlanStat label="未学" value={remaining} />
+            <StatCard tone="light" label="已学" value={introduced.toString()} />
+            <StatCard tone="light" label="已掌握" value={mastered.toString()} />
+            <StatCard tone="light" label="未学" value={remaining.toString()} />
           </View>
         </View>
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>目标方式</Text>
           <View style={styles.modeRow}>
-            <Pressable accessibilityRole="button" accessibilityState={{ selected: plan.mode === 'deadline' }} onPress={() => app.updateStudyPlan({ mode: 'deadline', targetDate: plan.targetDate ?? localDateKey(deadline) })} style={[styles.modeCard, plan.mode === 'deadline' && styles.modeCardActive]}>
+            <Pressable accessibilityRole="button" accessibilityState={{ selected: plan.mode === 'deadline' }} onPress={() => app.updateStudyPlan({ mode: 'deadline', targetDate: plan.targetDate ?? localDateKey(deadline) })} style={({ pressed }) => [styles.modeCard, plan.mode === 'deadline' && styles.modeCardActive, pressed && styles.pressed]}>
               <Text style={styles.modeTitle}>按考试日期</Text><Text style={styles.modeHint}>自动换算每日新词</Text>
             </Pressable>
-            <Pressable accessibilityRole="button" accessibilityState={{ selected: plan.mode === 'daily_words' }} onPress={() => app.updateStudyPlan({ mode: 'daily_words' })} style={[styles.modeCard, plan.mode === 'daily_words' && styles.modeCardActive]}>
+            <Pressable accessibilityRole="button" accessibilityState={{ selected: plan.mode === 'daily_words' }} onPress={() => app.updateStudyPlan({ mode: 'daily_words' })} style={({ pressed }) => [styles.modeCard, plan.mode === 'daily_words' && styles.modeCardActive, pressed && styles.pressed]}>
               <Text style={styles.modeTitle}>按每日词数</Text><Text style={styles.modeHint}>保持固定学习节奏</Text>
             </Pressable>
           </View>
@@ -126,7 +133,11 @@ export function PlanScreen({ app }: { app: AppStateApi }) {
                 <Text style={styles.optionLabel}>{strategy.label}</Text>
                 <Text style={styles.optionHint}>{strategy.hint}</Text>
               </View>
-              <Text style={styles.optionMark}>{plan.catchUpStrategy === strategy.key ? '●' : '○'}</Text>
+              <Ionicons
+                name={plan.catchUpStrategy === strategy.key ? 'checkmark-circle' : 'ellipse-outline'}
+                size={20}
+                color={plan.catchUpStrategy === strategy.key ? colors.accent : colors.textTertiary}
+              />
             </Pressable>
           ))}
         </View>
@@ -158,40 +169,62 @@ export function PlanScreen({ app }: { app: AppStateApi }) {
   );
 }
 
-function PlanStat({ label, value }: { label: string; value: number }) {
-  return <View style={styles.stat}><Text style={styles.statValue}>{value}</Text><Text style={styles.statLabel}>{label}</Text></View>;
-}
-
 function CounterRow({ label, hint, value, onMinus, onPlus }: { label: string; hint: string; value: number | string; onMinus: () => void; onPlus: () => void }) {
   return (
     <View style={styles.counterCard}>
       <View><Text style={styles.counterLabel}>{label}</Text><Text style={styles.counterHint}>{hint}</Text></View>
       <View style={styles.counterControls}>
-        <Pressable accessibilityRole="button" onPress={onMinus} style={styles.counterButton}><Text style={styles.counterButtonText}>−</Text></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel={`减少${label}`} onPress={onMinus} style={({ pressed }) => [styles.counterButton, pressed && styles.pressed]}>
+          <Ionicons name="remove" size={18} color={colors.textPrimary} />
+        </Pressable>
         <Text style={styles.counterValue}>{value}</Text>
-        <Pressable accessibilityRole="button" onPress={onPlus} style={styles.counterButton}><Text style={styles.counterButtonText}>＋</Text></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel={`增加${label}`} onPress={onPlus} style={({ pressed }) => [styles.counterButton, pressed && styles.pressed]}>
+          <Ionicons name="add" size={18} color={colors.textPrimary} />
+        </Pressable>
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#0b100e' },
-  container: { padding: 20, paddingTop: 8, paddingBottom: 36, gap: 22 },
-  heroCard: { backgroundColor: '#eef7d5', borderRadius: 26, padding: 20, gap: 10 },
-  eyebrow: { color: '#607b12', fontSize: 10, letterSpacing: 1.8, fontWeight: '900' },
-  title: { color: '#11180a', fontSize: 24, fontWeight: '900' },
-  finishDate: { color: '#536149', fontSize: 13, fontWeight: '700' },
-  progressTrack: { height: 7, backgroundColor: '#ced9aa', borderRadius: 99, overflow: 'hidden', marginTop: 6 },
-  progressFill: { height: '100%', backgroundColor: '#607b12' },
+  safeArea: { flex: 1, backgroundColor: colors.bg },
+  container: { padding: spacing.xl, paddingTop: spacing.sm, paddingBottom: 36, gap: spacing.xxl },
+  heroCard: { backgroundColor: colors.accentSoft, borderRadius: radius.xxl, padding: spacing.xl, gap: spacing.sm + 2 },
+  eyebrow: { ...typography.eyebrow, color: colors.accentDeep, letterSpacing: 1.6 },
+  title: { color: colors.accentInk, fontSize: 22, fontWeight: '700', letterSpacing: -0.3 },
+  finishDate: { color: '#5C6A50', fontSize: 13, fontWeight: '500' },
+  heroProgress: { marginTop: 6 },
   statsRow: { flexDirection: 'row', marginTop: 6 },
-  stat: { flex: 1 }, statValue: { color: '#172009', fontSize: 20, fontWeight: '900' }, statLabel: { color: '#627057', fontSize: 11, marginTop: 2 },
-  section: { gap: 10 }, sectionTitle: { color: '#f4f7f2', fontSize: 18, fontWeight: '900' },
-  modeRow: { flexDirection: 'row', gap: 10 }, modeCard: { flex: 1, borderRadius: 18, padding: 14, backgroundColor: '#151c18', borderWidth: 1, borderColor: '#263129' }, modeCardActive: { borderColor: '#8eaa3b', backgroundColor: '#1c2619' }, modeTitle: { color: '#eef2ee', fontSize: 13, fontWeight: '900' }, modeHint: { color: '#748078', fontSize: 10, lineHeight: 15, marginTop: 4 },
-  counterCard: { backgroundColor: '#151c18', borderRadius: 20, borderWidth: 1, borderColor: '#263129', padding: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  counterLabel: { color: '#f0f3ef', fontSize: 14, fontWeight: '800' }, counterHint: { color: '#758279', fontSize: 11, marginTop: 4 },
-  counterControls: { flexDirection: 'row', alignItems: 'center', gap: 12 }, counterButton: { width: 38, height: 38, borderRadius: 14, backgroundColor: '#29332c', alignItems: 'center', justifyContent: 'center' }, counterButtonText: { color: '#dce5dd', fontSize: 18, fontWeight: '900' }, counterValue: { color: '#a3e635', minWidth: 28, textAlign: 'center', fontSize: 17, fontWeight: '900' },
-  weekRow: { flexDirection: 'row', gap: 7 }, dayButton: { flex: 1, aspectRatio: 1, maxHeight: 44, borderRadius: 14, backgroundColor: '#151c18', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#263129' }, dayButtonActive: { backgroundColor: '#a3e635', borderColor: '#a3e635' }, dayText: { color: '#7d8981', fontWeight: '800' }, dayTextActive: { color: '#172009' },
-  option: { backgroundColor: '#151c18', borderRadius: 18, borderWidth: 1, borderColor: '#263129', padding: 14, flexDirection: 'row', alignItems: 'center' }, optionActive: { borderColor: '#708b23' }, optionText: { flex: 1 }, optionLabel: { color: '#eef2ee', fontSize: 14, fontWeight: '800' }, optionHint: { color: '#768279', fontSize: 11, marginTop: 3 }, optionMark: { color: '#a3e635', fontSize: 18 },
-  forecastCard: { height: 150, backgroundColor: '#151c18', borderRadius: 20, borderWidth: 1, borderColor: '#263129', padding: 14, flexDirection: 'row', alignItems: 'flex-end', gap: 7 }, forecastColumn: { flex: 1, alignItems: 'center' }, barArea: { height: 82, justifyContent: 'flex-end', alignItems: 'center', gap: 2, flexDirection: 'row' }, reviewBar: { width: 6, minHeight: 4, backgroundColor: '#536258', borderRadius: 4 }, newBar: { width: 8, minHeight: 4, backgroundColor: '#a3e635', borderRadius: 4 }, forecastTotal: { color: '#dce3dd', fontSize: 10, fontWeight: '800', marginTop: 5 }, forecastDay: { color: '#748078', fontSize: 10, marginTop: 3 }, legend: { color: '#6f7c73', fontSize: 11, lineHeight: 17 },
+  section: { gap: spacing.sm + 2 },
+  sectionTitle: { color: colors.textPrimary, fontSize: 17, fontWeight: '700', letterSpacing: -0.2 },
+  modeRow: { flexDirection: 'row', gap: spacing.sm + 2 },
+  modeCard: { flex: 1, borderRadius: radius.lg, padding: spacing.lg - 2, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, gap: 4 },
+  modeCardActive: { borderColor: colors.accentDeep, backgroundColor: colors.surfaceAlt },
+  modeTitle: { color: colors.textPrimary, fontSize: 13, fontWeight: '600' },
+  modeHint: { color: colors.textTertiary, fontSize: 10, lineHeight: 15, marginTop: 4 },
+  counterCard: { backgroundColor: colors.surface, borderRadius: radius.xl, borderWidth: 1, borderColor: colors.border, padding: spacing.lg - 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  counterLabel: { color: colors.textPrimary, fontSize: 14, fontWeight: '600' },
+  counterHint: { color: colors.textTertiary, fontSize: 11, marginTop: 4 },
+  counterControls: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  counterButton: { width: 36, height: 36, borderRadius: radius.md, backgroundColor: colors.surfaceAlt, alignItems: 'center', justifyContent: 'center' },
+  counterValue: { color: colors.accent, minWidth: 28, textAlign: 'center', fontSize: 16, fontWeight: '700' },
+  weekRow: { flexDirection: 'row', gap: 7 },
+  dayButton: { flex: 1, aspectRatio: 1, maxHeight: 44, borderRadius: radius.md, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border },
+  dayButtonActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+  dayText: { color: colors.textSecondary, fontWeight: '600' },
+  dayTextActive: { color: colors.accentInk, fontWeight: '700' },
+  option: { backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg - 2, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  optionActive: { borderColor: colors.accentDeep },
+  optionText: { flex: 1 },
+  optionLabel: { color: colors.textPrimary, fontSize: 14, fontWeight: '600' },
+  optionHint: { color: colors.textTertiary, fontSize: 11, marginTop: 3 },
+  forecastCard: { height: 150, backgroundColor: colors.surface, borderRadius: radius.xl, borderWidth: 1, borderColor: colors.border, padding: spacing.lg - 2, flexDirection: 'row', alignItems: 'flex-end', gap: 7 },
+  forecastColumn: { flex: 1, alignItems: 'center' },
+  barArea: { height: 82, justifyContent: 'flex-end', alignItems: 'center', gap: 2, flexDirection: 'row' },
+  reviewBar: { width: 6, minHeight: 4, backgroundColor: colors.textTertiary, borderRadius: 4 },
+  newBar: { width: 8, minHeight: 4, backgroundColor: colors.accent, borderRadius: 4 },
+  forecastTotal: { color: colors.textSecondary, fontSize: 10, fontWeight: '600', marginTop: 5 },
+  forecastDay: { color: colors.textTertiary, fontSize: 10, marginTop: 3 },
+  legend: { color: colors.textTertiary, fontSize: 11, lineHeight: 17 },
+  pressed: { opacity: pressedOpacity },
 });

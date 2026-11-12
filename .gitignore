@@ -21,6 +21,7 @@ ios/build/
 
 # Tools & editors
 .codegraph/
+.zcode/
 tmp/
 work/
 outputs/
@@ -32,6 +33,9 @@ yarn-error.*
 
 # macOS
 .DS_Store
+
+# Test fixtures (large binary files)
+tests/fixtures/epubs/
 
 # Environment
 .env

@@ -109,7 +109,8 @@ function wordsFromRows(rows: CellValue[][], sourceBook: string): Word[] {
   const usIndex = indexFor(headers, [/美音/, /us/, /american/, /phonetic/], -1);
   const phoneticIndex = indexFor(headers, [/^音标$/, /^phonetic$/, /^ipa$/], -1);
   const meaningIndex = indexFor(headers, [/释义/, /中文/, /meaning/, /definition/, /translation/], 3);
-  const exampleIndex = indexFor(headers, [/例句/, /example/, /sentence/], -1);
+  const examplesJsonIndex = indexFor(headers, [/^例句json$/, /^examplesjson$/, /^examplejson$/, /^examples$/], -1);
+  const exampleIndex = indexFor(headers, [/^例句$/, /^example$/, /^sentence$/], -1);
   const exampleMeaningIndex = indexFor(headers, [/例句翻译/, /例句释义/, /examplemeaning/, /exampletranslation/], -1);
 
   const candidates = rows.slice(1).map((row, index) => {
@@ -120,6 +121,7 @@ function wordsFromRows(rows: CellValue[][], sourceBook: string): Word[] {
     const meaning = cleanText(row[meaningIndex]);
     const example = exampleIndex >= 0 ? cleanText(row[exampleIndex]) : '';
     const exampleMeaning = exampleMeaningIndex >= 0 ? cleanText(row[exampleMeaningIndex]) : '';
+    const examplesJson = examplesJsonIndex >= 0 ? cleanText(row[examplesJsonIndex]) : '';
 
     return {
       id: `excel-link-${String(index + 1).padStart(4, '0')}-${normalizeWordId(term)}`,
@@ -128,6 +130,7 @@ function wordsFromRows(rows: CellValue[][], sourceBook: string): Word[] {
       meaning,
       example,
       exampleMeaning,
+      examplesJson,
       sourceBook,
       sourcePage: index + 1,
       rawText: uk && us && uk !== us ? `英音 ${uk} | 美音 ${us}` : '',
@@ -137,7 +140,7 @@ function wordsFromRows(rows: CellValue[][], sourceBook: string): Word[] {
   return sanitizeWordList(candidates);
 }
 
-async function parseXlsx(buffer: ArrayBuffer, sourceBook: string) {
+export async function parseXlsxWords(buffer: ArrayBuffer, sourceBook: string) {
   let zip: JSZip;
   try {
     zip = await JSZip.loadAsync(buffer);
@@ -154,6 +157,32 @@ async function parseXlsx(buffer: ArrayBuffer, sourceBook: string) {
   const sharedStrings = sharedStringsFile ? parseSharedStrings(await sharedStringsFile.async('string')) : [];
   const rows = parseRows(await sheetFile.async('string'), sharedStrings);
   return wordsFromRows(rows, sourceBook);
+}
+
+export async function importWordsFromExcelFile(uri: string, fileName: string, mimeType = '') {
+  if (/\.xls$/i.test(fileName) && !/\.xlsx$/i.test(fileName)) {
+    throw new Error('暂不支持旧版 .xls 文件，请在 Excel/WPS 中另存为 .xlsx 后再导入。');
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(uri);
+  } catch {
+    throw new Error('无法读取所选文件，请重新选择后再试。');
+  }
+  if (!response.ok) {
+    throw new Error('无法读取所选文件，请确认文件仍然存在且有访问权限。');
+  }
+
+  const sourceBook = fileName.replace(/\.(xlsx|xls|csv|tsv)$/i, '') || '本地 Excel 词库';
+  let words: Word[];
+  if (/\.xlsx$/i.test(fileName) || /spreadsheetml/i.test(mimeType)) {
+    words = await parseXlsxWords(await response.arrayBuffer(), sourceBook);
+  } else {
+    words = parseImportedWords(await response.text()).map((word) => ({ ...word, sourceBook }));
+  }
+  assertParsedWords(words);
+  return { title: sourceBook, words };
 }
 
 function normalizeExcelUrl(rawUrl: string) {
@@ -254,7 +283,7 @@ export async function importWordsFromExcelLink(rawUrl: string) {
     if (buffer.byteLength === 0) {
       throw new Error('下载到的 Excel 文件为空，请确认链接可以直接下载文件。');
     }
-    const words = await parseXlsx(buffer, sourceBook);
+    const words = await parseXlsxWords(buffer, sourceBook);
     assertParsedWords(words);
     return {
       title: sourceBook,
